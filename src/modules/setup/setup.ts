@@ -15,7 +15,12 @@ import { prisma } from "../../core/prisma.js";
 ====================================================== */
 export async function setupCommand(interaction: ChatInputCommandInteraction) {
   if (!interaction.inGuild() || !interaction.guildId) {
-    await interaction.reply({ ephemeral: true, content: "Use /setup dentro de um servidor." });
+    if (!interaction.replied) {
+      await interaction.reply({
+        ephemeral: true,
+        content: "❌ Use este comando dentro de um servidor.",
+      });
+    }
     return;
   }
 
@@ -55,6 +60,8 @@ export async function setupCommand(interaction: ChatInputCommandInteraction) {
    BOTÕES DE NAVEGAÇÃO
 ====================================================== */
 export async function setupPageButton(interaction: ButtonInteraction) {
+  if (!interaction.inGuild() || !interaction.guildId) return;
+
   await interaction.deferUpdate();
 
   let options: { label: string; value: string }[] = [];
@@ -77,40 +84,40 @@ export async function setupPageButton(interaction: ButtonInteraction) {
 
   const select = new StringSelectMenuBuilder()
     .setCustomId("setup:value")
-    .setPlaceholder("Selecione o que deseja definir")
+    .setPlaceholder("Selecione o item que deseja definir")
     .addOptions(options);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 
   await interaction.editReply({
-    content: "Selecione o item que deseja configurar:",
+    content: "Selecione o item que deseja configurar.\nO valor será salvo como **este canal atual**.",
     components: [row],
   });
 }
 
 /* ======================================================
-   SELECT MENU — DEFINIÇÃO DE VALORES
+   SELECT MENU — SALVAR CONFIGURAÇÃO
 ====================================================== */
 export async function setupValueSelect(interaction: StringSelectMenuInteraction) {
-  await interaction.deferUpdate();
-
   if (!interaction.inGuild() || !interaction.guildId) return;
 
-  const value = interaction.values[0];
+  await interaction.deferUpdate();
+
+  const key = interaction.values[0];
 
   await prisma.guildConfig.upsert({
     where: { guildId: interaction.guildId },
     create: {
       guildId: interaction.guildId,
-      [value]: interaction.channelId,
+      [key]: interaction.channelId,
     } as any,
     update: {
-      [value]: interaction.channelId,
+      [key]: interaction.channelId,
     } as any,
   });
 
   await interaction.editReply({
-    content: `✅ Configuração **${value}** salva com sucesso (valor = este canal).`,
+    content: `✅ Configuração **${key}** salva com sucesso.`,
     components: [],
   });
 }
@@ -122,7 +129,7 @@ export async function setupPublishButton(interaction: ButtonInteraction) {
   await interaction.deferUpdate();
 
   await interaction.editReply({
-    content: "🚀 Painéis publicados com sucesso. (Etapa de publicar será expandida depois.)",
+    content: "🚀 Painéis publicados com sucesso.\n(Fluxo completo será expandido depois.)",
     components: [],
   });
 }
