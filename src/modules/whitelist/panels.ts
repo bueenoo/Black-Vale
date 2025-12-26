@@ -1,7 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel } from "discord.js";
 
 export async function publishWhitelistPanel(channel: TextChannel) {
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const row = new ActionRowBuilder<any>().addComponents(
     new ButtonBuilder()
       .setCustomId("whitelist:start")
       .setLabel("📜 Iniciar Whitelist")
@@ -16,4 +16,5 @@ export async function publishWhitelistPanel(channel: TextChannel) {
     components: [row],
   });
 }
+
 
