@@ -2,7 +2,7 @@ import type { Client, TextChannel } from "discord.js";
 import { ChannelType } from "discord.js";
 import { RADIO_CHANNEL_ID } from "./handler.js";
 import { buildRadioText, type RadioType, SIGNAL_STATUSES } from "./templates.js";
-import { randInt, sleep, breakIntoRadioLines } from "./utils.js";
+import { randInt, breakIntoRadioLines } from "./utils.js";
 
 // ===== AJUSTES (IMERSÃO) =====
 // Ligue/desligue aqui:
@@ -20,27 +20,27 @@ const GHOST_TYPES: RadioType[] = ["BOATO", "AVISO", "CONFISSAO", "CLARA"];
 
 // Banco de mensagens (IA leve = variação procedural)
 const GHOST_BODIES: string[] = [
-  "luzes na trilha velha… não são lanternas.
-ninguém anda com tanta calma aqui.",
-  "ouvi passos… mas não tinha pegadas.
-se você sabe o que isso significa, não responda.",
-  "o vale está mais quieto hoje.
+  `luzes na trilha velha… não são lanternas.
+ninguém anda com tanta calma aqui.`,
+  `ouvi passos… mas não tinha pegadas.
+se você sabe o que isso significa, não responda.`,
+  `o vale está mais quieto hoje.
 quieto demais.
-como se estivesse prendendo o ar.",
-  "tem fumaça perto do rio.
+como se estivesse prendendo o ar.`,
+  `tem fumaça perto do rio.
 mas não cheira a madeira.
-cheira a metal quente.",
-  "alguém marcou árvores com fita preta.
+cheira a metal quente.`,
+  `alguém marcou árvores com fita preta.
 três nós.
-se vir isso, volta.",
-  "vi um carro parado.
+se vir isso, volta.`,
+  `vi um carro parado.
 porta aberta.
 rádio ligado.
-ninguém dentro.",
-  "gritos, depois risada.
+ninguém dentro.`,
+  `gritos, depois risada.
 depois silêncio.
 no mesmo lugar.
-na mesma hora.",
+na mesma hora.`,
 ];
 
 function pick<T>(arr: T[]) {
