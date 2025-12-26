@@ -10,16 +10,11 @@ import {
   ChannelType,
   RoleSelectMenuBuilder,
   ChannelSelectMenuBuilder,
-  MentionableSelectMenuBuilder,
   EmbedBuilder,
   TextChannel,
-  PermissionFlagsBits,
 } from "discord.js";
 
 import { prisma } from "../../core/prisma.js";
-
-// (Opcional) publishers dos painéis — se você já tem esses arquivos, deixa.
-// Se não tiver, comente os imports e o publish vai só responder OK.
 import { publishTicketPanel } from "../tickets/panel.js";
 import { publishWhitelistPanel } from "../whitelist/panels.js";
 
@@ -33,7 +28,6 @@ async function ensureRepliable(i: any) {
 }
 
 async function edit(i: any, payload: any) {
-  // Sempre editar a resposta deferred
   return i.editReply(payload);
 }
 
@@ -44,7 +38,7 @@ function opt(label: string, value: string, description?: string) {
 }
 
 // -----------------------------
-// Config items (LIMITADO a 25!)
+// Config items (máx 25)
 // -----------------------------
 type ConfigItem =
   | "welcomeChannelId"
@@ -76,48 +70,39 @@ const CONFIG_ITEMS: Array<{
 }> = [
   { key: "welcomeChannelId", label: "👋 Canal de Boas-vindas", type: "channel", desc: "Canal onde o bot dá boas-vindas." },
   { key: "staffRoleId", label: "🛡️ Cargo STAFF", type: "role", desc: "Cargo que terá acesso aos tickets/whitelist." },
-  { key: "modLogChannelId", label: "🧾 Canal de logs (moderação)", type: "channel", desc: "Opcional: logs gerais de moderação." },
+  { key: "modLogChannelId", label: "🧾 Canal de logs", type: "channel", desc: "Logs gerais." },
 
-  { key: "brandName", label: "🏷️ Nome (Brand)", type: "text", desc: "Nome usado nos embeds/painéis." },
-  { key: "brandFooter", label: "📌 Rodapé (Brand)", type: "text", desc: "Texto do rodapé dos embeds." },
-  { key: "brandColor", label: "🎨 Cor (Brand)", type: "number", desc: "Cor numérica (ex: 0x000000 -> 0 / 0xFF0000 -> 16711680)." },
+  { key: "brandName", label: "🏷️ Nome da Brand", type: "text", desc: "Nome usado nos embeds." },
+  { key: "brandFooter", label: "📌 Rodapé", type: "text", desc: "Rodapé dos embeds." },
+  { key: "brandColor", label: "🎨 Cor", type: "number", desc: "Cor numérica." },
 
-  // whitelist
-  { key: "whitelistPanelChannelId", label: "📜 Canal do painel Whitelist", type: "channel", desc: "Onde publicar o painel da whitelist." },
-  { key: "whitelistAccessChannelId", label: "🔓 Canal de acesso Whitelist", type: "channel", desc: "Canal que o cargo whitelist libera." },
-  { key: "whitelistStartPanelChannelId", label: "🧩 Canal do botão Iniciar WL", type: "channel", desc: "Canal onde fica o botão Iniciar Whitelist." },
-  { key: "whitelistStaffChannelId", label: "👁️ Canal staff (análise WL)", type: "channel", desc: "Canal onde staff recebe as respostas." },
-  { key: "whitelistRejectLogChannelId", label: "⛔ Canal log reprovação WL", type: "channel", desc: "Opcional: canal para logs de reprovação." },
-  { key: "whitelistCategoryId", label: "📁 Categoria Whitelist (temp)", type: "category", desc: "Categoria onde criar canais temporários da whitelist." },
-  { key: "whitelistRoleId", label: "📌 Cargo: Whitelist (acesso)", type: "role", desc: "Cargo que libera o canal de whitelist." },
-  { key: "whitelistPreResultRoleId", label: "⌛ Cargo: Aguardando aprovação", type: "role", desc: "Cargo enquanto aguarda a decisão." },
-  { key: "whitelistApprovedRoleId", label: "✅ Cargo: Aprovado", type: "role", desc: "Cargo quando aprovado." },
-  { key: "whitelistRejectedRoleId", label: "❌ Cargo: Reprovado", type: "role", desc: "Cargo quando reprovado (opcional)." },
+  { key: "whitelistPanelChannelId", label: "📜 Canal painel WL", type: "channel", desc: "Publicação da whitelist." },
+  { key: "whitelistAccessChannelId", label: "🔓 Canal WL", type: "channel", desc: "Canal liberado." },
+  { key: "whitelistStartPanelChannelId", label: "🧩 Canal iniciar WL", type: "channel", desc: "Botão iniciar." },
+  { key: "whitelistStaffChannelId", label: "👁️ Canal staff WL", type: "channel", desc: "Análise staff." },
+  { key: "whitelistRejectLogChannelId", label: "⛔ Log reprovação", type: "channel", desc: "Logs reprovação." },
+  { key: "whitelistCategoryId", label: "📁 Categoria WL", type: "category", desc: "Categoria temp." },
+  { key: "whitelistRoleId", label: "📌 Cargo WL", type: "role", desc: "Acesso WL." },
+  { key: "whitelistPreResultRoleId", label: "⌛ Cargo aguardando", type: "role", desc: "Pré resultado." },
+  { key: "whitelistApprovedRoleId", label: "✅ Cargo aprovado", type: "role", desc: "Aprovado." },
+  { key: "whitelistRejectedRoleId", label: "❌ Cargo reprovado", type: "role", desc: "Reprovado." },
 
-  // tickets
-  { key: "ticketPanelChannelId", label: "🎫 Canal do painel Tickets", type: "channel", desc: "Onde publicar o painel de tickets." },
-  { key: "ticketCategoryId", label: "📁 Categoria Tickets", type: "category", desc: "Categoria onde criar canais de ticket." },
-  { key: "ticketLogChannelId", label: "📄 Canal logs/transcripts", type: "channel", desc: "Canal para enviar transcript HTML ao fechar." },
-  { key: "ticketDeleteDelaySec", label: "⏱️ Delay para deletar canal", type: "number", desc: "Segundos até deletar o canal após fechar (ex: 10)." },
+  { key: "ticketPanelChannelId", label: "🎫 Canal painel Tickets", type: "channel", desc: "Publicação tickets." },
+  { key: "ticketCategoryId", label: "📁 Categoria Tickets", type: "category", desc: "Categoria tickets." },
+  { key: "ticketLogChannelId", label: "📄 Log tickets", type: "channel", desc: "Logs tickets." },
+  { key: "ticketDeleteDelaySec", label: "⏱️ Delay delete", type: "number", desc: "Delay em segundos." },
 ];
 
-// ✅ Garantia: não passa de 25
-if (CONFIG_ITEMS.length > 25) {
-  throw new Error("CONFIG_ITEMS excede 25 opções. Reduza a lista.");
-}
-
 // -----------------------------
-// Menu builders
+// Menus
 // -----------------------------
 function mainMenuRow() {
   const menu = new StringSelectMenuBuilder()
     .setCustomId("setup_select:item")
-    .setPlaceholder("Selecione o item que deseja definir")
+    .setPlaceholder("Selecione o item")
     .setMinValues(1)
     .setMaxValues(1)
-    .addOptions(
-      CONFIG_ITEMS.map((x) => opt(x.label, x.key, x.desc))
-    );
+    .addOptions(CONFIG_ITEMS.map((x) => opt(x.label, x.key, x.desc)));
 
   return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 }
@@ -126,51 +111,31 @@ function publishRow() {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("setup_publish:all")
-      .setLabel("🚀 Publicar painéis (Tickets + Whitelist)")
+      .setLabel("🚀 Publicar painéis")
       .setStyle(ButtonStyle.Success),
   );
 }
 
-function backRow() {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("setup:home")
-      .setLabel("⬅️ Voltar")
-      .setStyle(ButtonStyle.Secondary),
-  );
-}
-
 // -----------------------------
-// Prisma save helper
+// Save config
 // -----------------------------
 async function saveConfig(guildId: string, key: ConfigItem, value: any) {
-  // upsert com create/update dinâmico
-  const data: any = {};
-  data[key] = value;
-
   await prisma.guildConfig.upsert({
     where: { guildId },
-    create: { guildId, ...data },
-    update: data,
+    create: { guildId, [key]: value },
+    update: { [key]: value },
   });
 }
 
 // -----------------------------
-// Public API (exports)
+// Commands
 // -----------------------------
 export async function setupCommand(interaction: ChatInputCommandInteraction) {
   await ensureRepliable(interaction);
 
   const embed = new EmbedBuilder()
     .setTitle("⚙️ Setup — Blackbot")
-    .setDescription(
-      [
-        "Selecione o item que deseja configurar.",
-        "✅ O valor salvo será aplicado para este servidor (guild).",
-        "",
-        "Dica: comece definindo **Cargo STAFF**, **Categoria Tickets** e **Categoria Whitelist**.",
-      ].join("\n")
-    );
+    .setDescription("Selecione o item que deseja configurar.");
 
   await edit(interaction, {
     embeds: [embed],
@@ -178,162 +143,50 @@ export async function setupCommand(interaction: ChatInputCommandInteraction) {
   });
 }
 
-export async function setupPageButton(interaction: ButtonInteraction) {
-  await ensureRepliable(interaction);
-
-  // Por enquanto só temos home/back
-  if (interaction.customId === "setup:home") {
-    const embed = new EmbedBuilder()
-      .setTitle("⚙️ Setup — Blackbot")
-      .setDescription("Selecione o item que deseja configurar.");
-
-    await edit(interaction, {
-      embeds: [embed],
-      components: [mainMenuRow(), publishRow()],
-    });
-    return;
-  }
-
-  await edit(interaction, {
-    content: "⚠️ Botão de setup desconhecido.",
-    components: [mainMenuRow(), publishRow()],
-  });
-}
-
 export async function setupValueSelect(interaction: StringSelectMenuInteraction) {
   await ensureRepliable(interaction);
 
-  // menu principal: escolher item
-  if (interaction.customId === "setup_select:item") {
-    const key = interaction.values[0] as ConfigItem;
-    const item = CONFIG_ITEMS.find((x) => x.key === key);
-    if (!item) {
-      await edit(interaction, { content: "⚠️ Item inválido.", components: [mainMenuRow(), publishRow()] });
-      return;
-    }
+  if (!interaction.customId.startsWith("setup_select:value:")) return;
 
-    // dependendo do tipo, abre um seletor apropriado
-    if (item.type === "channel" || item.type === "category") {
-      const ch = new ChannelSelectMenuBuilder()
-        .setCustomId(`setup_select:value:${key}`)
-        .setPlaceholder("Selecione um canal")
-        .setMinValues(1)
-        .setMaxValues(1);
+  const key = interaction.customId.split(":")[2] as ConfigItem;
+  const value = interaction.values[0];
 
-      if (item.type === "category") {
-        ch.setChannelTypes(ChannelType.GuildCategory);
-      } else {
-        ch.setChannelTypes(ChannelType.GuildText);
-      }
+  await saveConfig(interaction.guildId!, key, value);
 
-      const row = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(ch);
-
-      await edit(interaction, {
-        content: `✅ Configure: **${item.label}**\n${item.desc}`,
-        embeds: [],
-        components: [row, backRow()],
-      });
-      return;
-    }
-
-    if (item.type === "role") {
-      const r = new RoleSelectMenuBuilder()
-        .setCustomId(`setup_select:value:${key}`)
-        .setPlaceholder("Selecione um cargo")
-        .setMinValues(1)
-        .setMaxValues(1);
-
-      const row = new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(r);
-
-      await edit(interaction, {
-        content: `✅ Configure: **${item.label}**\n${item.desc}`,
-        embeds: [],
-        components: [row, backRow()],
-      });
-      return;
-    }
-
-    // text/number: instrução manual
-    await edit(interaction, {
-      content:
-        `✅ Configure: **${item.label}**\n` +
-        `${item.desc}\n\n` +
-        `➡️ **Envie o valor neste chat** usando o comando:\n` +
-        `\`/setup_set key:${key} value:...\`\n\n` +
-        `⚠️ (Se você não tem /setup_set, me avise e eu te envio também.)`,
-      embeds: [],
-      components: [backRow()],
-    });
-    return;
-  }
-
-  // menu de valor (channel/role)
-  if (interaction.customId.startsWith("setup_select:value:")) {
-    const key = interaction.customId.split(":")[2] as ConfigItem;
-    const guildId = interaction.guildId!;
-    if (!guildId) {
-      await edit(interaction, { content: "⚠️ Isso só funciona dentro do servidor.", components: [] });
-      return;
-    }
-
-    const item = CONFIG_ITEMS.find((x) => x.key === key);
-    if (!item) {
-      await edit(interaction, { content: "⚠️ Chave inválida.", components: [mainMenuRow(), publishRow()] });
-      return;
-    }
-
-    const selected = interaction.values[0]; // id do canal/cargo
-    await saveConfig(guildId, key, selected);
-
-    await edit(interaction, {
-      content: `✅ Configuração salva: **${key}** = \`${selected}\``,
-      components: [mainMenuRow(), publishRow()],
-    });
-    return;
-  }
-
-  await edit(interaction, { content: "⚠️ Select desconhecido.", components: [mainMenuRow(), publishRow()] });
+  await edit(interaction, {
+    content: `✅ Configuração salva: **${key}**`,
+    components: [mainMenuRow(), publishRow()],
+  });
 }
 
 export async function setupPublishButton(interaction: ButtonInteraction) {
   await ensureRepliable(interaction);
 
   const guild = interaction.guild;
-  if (!guild) {
-    await edit(interaction, { content: "⚠️ Isso só funciona dentro do servidor.", components: [] });
-    return;
+  if (!guild) return;
+
+  const cfg = await prisma.guildConfig.findUnique({
+    where: { guildId: guild.id },
+  });
+
+  // Tickets
+  if (cfg?.ticketPanelChannelId) {
+    const ch = await guild.channels.fetch(cfg.ticketPanelChannelId).catch(() => null);
+    if (ch?.type === ChannelType.GuildText) {
+      await publishTicketPanel(ch as TextChannel);
+    }
   }
 
-  // carrega cfg
-  const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
-
-  // publica painéis onde estiver configurado
-  try {
-    // tickets
-    if (cfg?.ticketPanelChannelId) {
-      const ch = await guild.channels.fetch(cfg.ticketPanelChannelId).catch(() => null);
-      if (ch && ch.type === ChannelType.GuildText) {
-        await publishTicketPanel(ch as TextChannel);
-      }
+  // Whitelist
+  if (cfg?.whitelistPanelChannelId) {
+    const ch = await guild.channels.fetch(cfg.whitelistPanelChannelId).catch(() => null);
+    if (ch?.type === ChannelType.GuildText) {
+      await publishWhitelistPanel(ch as TextChannel);
     }
-
-    // whitelist
-    if (cfg?.whitelistPanelChannelId) {
-      const ch = await guild.channels.fetch(cfg.whitelistPanelChannelId).catch(() => null);
-      if (ch && ch.type === ChannelType.GuildText) {
-        await publishWhitelistPanel(ch as TextChannel, cfg);
-      }
-    }
-
-    await edit(interaction, {
-      content: "🚀 OK! Se os canais estiverem configurados, os painéis foram publicados/atualizados.",
-      components: [mainMenuRow(), publishRow()],
-    });
-  } catch (err) {
-    console.error("publish error:", err);
-    await edit(interaction, {
-      content: "⚠️ Erro ao publicar painéis. Verifique os logs.",
-      components: [mainMenuRow(), publishRow()],
-    });
   }
+
+  await edit(interaction, {
+    content: "🚀 Painéis publicados com sucesso.",
+    components: [mainMenuRow(), publishRow()],
+  });
 }
