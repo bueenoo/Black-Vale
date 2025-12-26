@@ -14,46 +14,39 @@ import {
 
 export async function handleInteraction(interaction: Interaction) {
   try {
-    /* ===================== SLASH COMMANDS ===================== */
+    // Slash commands
     if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === "setup") {
-        await setupCommand(interaction as ChatInputCommandInteraction);
+      const cmd = interaction as ChatInputCommandInteraction;
+
+      if (cmd.commandName === "setup") {
+        return await setupCommand(cmd);
       }
+
+      // outros comandos aqui...
       return;
     }
 
-    /* ===================== BOTÕES ===================== */
+    // Buttons
     if (interaction.isButton()) {
       const btn = interaction as ButtonInteraction;
 
-      if (btn.customId.startsWith("setup:page:")) {
-        await setupPageButton(btn);
-        return;
-      }
+      if (btn.customId.startsWith("setup:page:")) return await setupPageButton(btn);
+      if (btn.customId === "setup:publish") return await setupPublishButton(btn);
 
-      if (btn.customId === "setup:publish") {
-        await setupPublishButton(btn);
-        return;
-      }
+      // aqui entram tickets/whitelist depois
+      return;
     }
 
-    /* ===================== SELECT MENU ===================== */
+    // Select menus
     if (interaction.isStringSelectMenu()) {
-      const select = interaction as StringSelectMenuInteraction;
+      const sel = interaction as StringSelectMenuInteraction;
 
-      if (select.customId === "setup:value") {
-        await setupValueSelect(select);
-        return;
-      }
+      if (sel.customId === "setup:value") return await setupValueSelect(sel);
+
+      return;
     }
   } catch (err) {
     console.error("Interaction error:", err);
-
-    if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        ephemeral: true,
-        content: "❌ Ocorreu um erro ao processar esta interação.",
-      });
-    }
+    // não tente reply aqui se já respondeu
   }
 }
