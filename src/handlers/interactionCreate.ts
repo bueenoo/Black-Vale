@@ -8,6 +8,7 @@ import {
 import { createLogger } from "../core/logger.js";
 import { loadEnv } from "../core/env.js";
 
+// setup
 import {
   setupCommand,
   setupPageButton,
@@ -15,18 +16,19 @@ import {
   setupValueSelect,
 } from "../modules/setup/setup.js";
 
+// tickets
 import { handleTicketButton } from "../modules/tickets/tickets.js";
 
+// whitelist
 import {
   whitelistStartButton,
   handleWhitelistAnswerModal,
   handleWhitelistDecisionButton,
   handleWhitelistRejectReasonModal,
-  handleWhitelistAdjustReasonModal,
 } from "../modules/whitelist/handler.js";
 
 function isSetupButton(id: string) {
-  return id.startsWith("setup:");
+  return id.startsWith("setup:") || id.startsWith("setup_page:") || id.startsWith("setup_publish:");
 }
 
 export async function handleInteraction(interaction: Interaction) {
@@ -34,53 +36,68 @@ export async function handleInteraction(interaction: Interaction) {
   const log = createLogger(env.LOG_LEVEL ?? "info");
 
   try {
+    // Slash commands
     if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === "setup") {
-        await setupCommand(interaction);
+      const i = interaction as ChatInputCommandInteraction;
+
+      if (i.commandName === "setup") {
+        await setupCommand(i);
+        return;
       }
       return;
     }
 
+    // Buttons
     if (interaction.isButton()) {
       const i = interaction as ButtonInteraction;
 
+      // whitelist start
       if (i.customId === "whitelist:start") {
         await whitelistStartButton(i);
         return;
       }
 
-      if (
-        i.customId.startsWith("wl:approve:") ||
-        i.customId.startsWith("wl:reject:") ||
-        i.customId.startsWith("wl:adjust:")
-      ) {
+      // whitelist staff decisions
+      if (i.customId.startsWith("wl:approve:") || i.customId.startsWith("wl:reject:")) {
         await handleWhitelistDecisionButton(i);
         return;
       }
 
+      // setup buttons
       if (isSetupButton(i.customId)) {
-        if (i.customId.includes("publish")) await setupPublishButton(i);
-        else await setupPageButton(i);
-        return;
+        if (i.customId.startsWith("setup:") || i.customId.startsWith("setup_page:")) {
+          await setupPageButton(i);
+          return;
+        }
+        if (i.customId.startsWith("setup_publish:")) {
+          await setupPublishButton(i);
+          return;
+        }
       }
 
+      // ticket buttons
       if (i.customId.startsWith("ticket:")) {
         await handleTicketButton(i);
         return;
       }
+
+      return;
     }
 
+    // Select menus
     if (interaction.isAnySelectMenu()) {
       if (interaction.customId.startsWith("setup_select:")) {
         await setupValueSelect(interaction);
+        return;
       }
       return;
     }
 
+    // Modals
     if (interaction.isModalSubmit()) {
       const i = interaction as ModalSubmitInteraction;
 
-      if (i.customId.startsWith("whitelist:answer:")) {
+      if (i.customId.startsWith("wl:answer:")) {
         await handleWhitelistAnswerModal(i);
         return;
       }
@@ -90,13 +107,10 @@ export async function handleInteraction(interaction: Interaction) {
         return;
       }
 
-      if (i.customId.startsWith("wl:adjust_reason:")) {
-        await handleWhitelistAdjustReasonModal(i);
-        return;
-      }
+      return;
     }
   } catch (err) {
-    console.error(err);
-    log.error(err);
+    console.error("Interaction error:", err);
+    log.error({ err }, "Interaction error");
   }
 }
