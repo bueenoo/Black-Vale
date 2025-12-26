@@ -313,7 +313,7 @@ export async function setupPublishButton(interaction: ButtonInteraction) {
     if (cfg?.ticketPanelChannelId) {
       const ch = await guild.channels.fetch(cfg.ticketPanelChannelId).catch(() => null);
       if (ch && ch.type === ChannelType.GuildText) {
-        await publishTicketPanel(ch as TextChannel, cfg);
+        await publishTicketPanel(ch as TextChannel);
       }
     }
 
