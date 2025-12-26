@@ -267,4 +267,103 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
 
   // permissão staff
   const cfg = await prisma.guildConfig.findUnique({ where: { guildId } });
+  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
 
+  const isStaffByRole = !!(cfg?.staffRoleId && member?.roles.cache.has(cfg.staffRoleId));
+  const isAdmin = !!member?.permissions.has(PermissionFlagsBits.ManageGuild);
+
+  if (!isStaffByRole && !isAdmin) {
+    await interaction.reply({ ephemeral: true, content: "⛔ Você não tem permissão para decidir whitelist." });
+    return;
+  }
+
+  if (action === "reject") {
+    // abre modal de motivo obrigatório
+    await interaction.showModal(rejectReasonModal(`wl:reject_reason:${guildId}:${targetUserId}`));
+    return;
+  }
+
+  if (action === "approve") {
+    await ensureEphemeralReply(interaction);
+
+    const targetMember = await interaction.guild?.members.fetch(targetUserId).catch(() => null);
+
+    // cargos
+    if (cfg?.whitelistApprovedRoleId && targetMember) {
+      await targetMember.roles.add(cfg.whitelistApprovedRoleId).catch(() => null);
+    }
+    if (cfg?.whitelistPreResultRoleId && targetMember) {
+      await targetMember.roles.remove(cfg.whitelistPreResultRoleId).catch(() => null);
+    }
+
+    // DM
+    const user = await interaction.client.users.fetch(targetUserId).catch(() => null);
+    if (user) await safeDM(user, dmApproved());
+
+    // feedback
+    await interaction.editReply({ content: `✅ Aprovado. DM enviada (se possível).` }).catch(() => null);
+    await interaction.message.edit({
+      components: [],
+      content: `✅ **Whitelist APROVADA** por <@${interaction.user.id}>`,
+    }).catch(() => null);
+
+    return;
+  }
+}
+
+// =============================
+// STAFF REJECT MODAL (motivo)
+// =============================
+export async function handleWhitelistRejectReasonModal(interaction: ModalSubmitInteraction) {
+  const parts = interaction.customId.split(":"); // wl:reject_reason:guild:user
+  if (parts.length < 4) return;
+
+  const guildId = parts[2];
+  const targetUserId = parts[3];
+
+  // permissão staff
+  const cfg = await prisma.guildConfig.findUnique({ where: { guildId } });
+  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+
+  const isStaffByRole = !!(cfg?.staffRoleId && member?.roles.cache.has(cfg.staffRoleId));
+  const isAdmin = !!member?.permissions.has(PermissionFlagsBits.ManageGuild);
+
+  if (!isStaffByRole && !isAdmin) {
+    await interaction.reply({ ephemeral: true, content: "⛔ Você não tem permissão para reprovar whitelist." });
+    return;
+  }
+
+  const reason = interaction.fields.getTextInputValue("reason")?.trim() ?? "";
+
+  await ensureEphemeralReply(interaction);
+
+  const targetMember = await interaction.guild?.members.fetch(targetUserId).catch(() => null);
+
+  // cargos
+  if (cfg?.whitelistRejectedRoleId && targetMember) {
+    await targetMember.roles.add(cfg.whitelistRejectedRoleId).catch(() => null);
+  }
+  if (cfg?.whitelistPreResultRoleId && targetMember) {
+    await targetMember.roles.remove(cfg.whitelistPreResultRoleId).catch(() => null);
+  }
+
+  // DM
+  const user = await interaction.client.users.fetch(targetUserId).catch(() => null);
+  if (user) await safeDM(user, dmRejected(reason));
+
+  // log opcional reprovação
+  if (cfg?.whitelistRejectLogChannelId) {
+    const ch = await interaction.client.channels.fetch(cfg.whitelistRejectLogChannelId).catch(() => null);
+    if (ch?.isTextBased()) {
+      await ch.send({
+        content: `❌ Whitelist reprovada: <@${targetUserId}> — por <@${interaction.user.id}>\n**Motivo:** ${reason}`,
+      }).catch(() => null);
+    }
+  }
+
+  await interaction.editReply({ content: "❌ Reprovado. Motivo registrado e DM enviada (se possível)." }).catch(() => null);
+
+  // tenta editar a mensagem do staff que originou a reprovação:
+  // (se o modal veio do botão, a mensagem original é a última interação, então nem sempre temos ref direta)
+  // por isso a gente só finaliza aqui.
+}
