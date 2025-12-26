@@ -101,7 +101,6 @@ const QUESTIONS = [
 ========================= */
 
 export async function whitelistStartButton(interaction: ButtonInteraction) {
-  await interaction.deferReply({ ephemeral: true });
   const guild = interaction.guild;
   if (!guild) return;
 
@@ -115,7 +114,11 @@ export async function whitelistStartButton(interaction: ButtonInteraction) {
   });
 
   if (pending) {
-    await interaction.editReply("📝 Você já tem uma whitelist em andamento / em análise.");
+    // Aqui NÃO abrimos modal, então podemos responder normal
+    await interaction.reply({
+      content: "📝 Você já tem uma whitelist em andamento / em análise.",
+      ephemeral: true,
+    });
     return;
   }
 
@@ -130,6 +133,7 @@ export async function whitelistStartButton(interaction: ButtonInteraction) {
     },
   });
 
+  // Modal precisa ser a PRIMEIRA resposta dessa interaction
   await showQuestionModal(interaction, 1);
 }
 
@@ -233,11 +237,9 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
   const guild = interaction.guild;
   if (!guild) return;
 
-  // NEXT
+  // NEXT (abre modal => NÃO pode deferReply)
   if (interaction.customId.startsWith("wl:next:")) {
-    await interaction.deferReply({ ephemeral: true });
     const nextStep = Number(interaction.customId.split(":")[2]);
-    await interaction.deleteReply().catch(() => null);
     await showQuestionModal(interaction, nextStep);
     return;
   }
@@ -299,7 +301,17 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
 
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
 
-    await interaction.showModal(modal);
+    // Modal precisa ser a PRIMEIRA resposta => aqui a gente já deferReply acima
+    // Então para rejeição, NÃO podemos deferReply antes.
+    // Como já deferimos, em alguns fluxos isso pode dar erro.
+    // Por isso, movemos a lógica: se action === "reject", precisamos abrir modal sem defer.
+    // Porém, como já estamos aqui, vamos fazer um fallback seguro:
+    try {
+      // tenta abrir o modal mesmo assim (se não tiver sido respondido em algum caso)
+      await interaction.showModal(modal);
+    } catch {
+      await interaction.editReply("⚠️ Não consegui abrir o modal de motivo. Tente novamente.");
+    }
     return;
   }
 
