@@ -9,13 +9,17 @@ import {
   GuildMember,
 } from "discord.js";
 import { buildRadioText, SIGNAL_STATUSES, type RadioType, type SignalStatus } from "./templates.js";
-import { breakIntoRadioLines, sanitizeRadioText } from "./utils.js";
+import { breakIntoRadioLines, sanitizeRadioText, sleep, randInt } from "./utils.js";
 
 // ===== CONFIG (FIXO) =====
 export const RADIO_CHANNEL_ID = "1453867021140754543"; // 📻｜radio-bitterroot
 export const RADIO_PUBLISH_ROLE_ID = "1453868618172596509"; // cargo que pode publicar
 
 const COOLDOWN_MS = 2 * 60 * 1000; // 2 min por usuário
+const FAKE_DELAY_MIN_MS = 3_000;
+const FAKE_DELAY_MAX_MS = 10_000;
+
+const AUTO_DELETE_MS = 10 * 60 * 1000; // 10 min
 
 const lastSentAt = new Map<string, number>();
 
@@ -99,6 +103,9 @@ export async function handleRadioSubmit(i: ModalSubmitInteraction) {
     return;
   }
 
+  // evita timeout do Discord
+  await i.deferReply({ ephemeral: true });
+
   const type = i.customId.split(":")[2] as RadioType;
   const status = pickStatus(type);
 
@@ -107,22 +114,32 @@ export async function handleRadioSubmit(i: ModalSubmitInteraction) {
 
   const signalLine = sanitizeRadioText(signalLineRaw);
   const bodySan = sanitizeRadioText(bodyRaw);
-
   const body = breakIntoRadioLines(bodySan, 42);
 
   const text = buildRadioText({ status, type, signalLine, body });
 
   const ch = await i.client.channels.fetch(RADIO_CHANNEL_ID).catch(() => null);
   if (!ch || ch.type !== ChannelType.GuildText) {
-    await i.reply({
-      ephemeral: true,
-      content: "❌ Canal de rádio não encontrado. Avise o staff para configurar o ID do canal.",
-    });
+    await i.editReply("❌ Canal de rádio não encontrado. Avise o staff para configurar o ID do canal.");
     return;
   }
 
-  await ch.send({ content: text, allowedMentions: { parse: [] } });
-  lastSentAt.set(userId, now);
+  // 🔊 delay falso (3–10s)
+  const delay = randInt(FAKE_DELAY_MIN_MS, FAKE_DELAY_MAX_MS);
+  await i.editReply("📡 Sintonizando… captando sinal…");
+  await sleep(delay);
 
-  await i.reply({ ephemeral: true, content: "✅ Transmissão enviada. O vale ouviu." });
+  const msg = await ch.send({ content: text, allowedMentions: { parse: [] } });
+  lastSentAt.set(userId, Date.now());
+
+  // ⏱️ apaga após 10 min
+  setTimeout(async () => {
+    try {
+      await msg.delete();
+    } catch {
+      // ignore
+    }
+  }, AUTO_DELETE_MS);
+
+  await i.editReply("✅ Transmissão enviada. O vale ouviu. (expira em 10 min)");
 }

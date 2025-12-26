@@ -14,7 +14,6 @@ export function sanitizeRadioText(input: string) {
   return t;
 }
 
-// força “frases curtas” estilo rádio
 export function breakIntoRadioLines(text: string, maxLine = 42) {
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -30,6 +29,13 @@ export function breakIntoRadioLines(text: string, maxLine = 42) {
   }
   if (line.trim()) lines.push(line.trim());
 
-  // no máximo 10 linhas (anti-textão)
   return lines.slice(0, 10).join("\n");
+}
+
+export async function sleep(ms: number) {
+  await new Promise((res) => setTimeout(res, ms));
+}
+
+export function randInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }

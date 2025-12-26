@@ -6,6 +6,9 @@ import { handleInteraction } from "./handlers/interactionCreate.js";
 import { createLogger } from "./core/logger.js";
 import { ensureGuildConfig } from "./core/seed.js";
 
+// radio ghosts
+import { startGhostRadio } from "./modules/radio/ghost.js";
+
 async function main() {
   const env = loadEnv();
   const log = createLogger(env.LOG_LEVEL ?? "info");
@@ -39,6 +42,14 @@ async function main() {
     } catch (err) {
       console.error("Command registration error:", err);
       log.error({ err }, "Command registration error");
+    }
+
+    // 📡 transmissões fantasmas (ajuste os constants no arquivo ghost.ts)
+    try {
+      startGhostRadio(client);
+    } catch (err) {
+      console.error("Ghost radio error:", err);
+      log.error({ err }, "Ghost radio error");
     }
   });
 

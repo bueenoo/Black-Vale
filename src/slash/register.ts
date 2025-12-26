@@ -10,7 +10,6 @@ export async function registerCommands(client: Client, env: Env) {
 
   const guildId = env.DISCORD_GUILD_ID;
 
-  // Fetch comandos atuais do guild (NÃO sobrescreve /ping, /setup, /painel)
   const existing = await client.application.commands.fetch({ guildId });
 
   const desired = radioCommandData.toJSON();

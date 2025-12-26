@@ -140,7 +140,6 @@ export async function handleInteraction(interaction: Interaction) {
     console.error("Interaction error:", err);
     log.error({ err }, "Interaction error");
 
-    // opcional: se quiser responder um erro genérico sem quebrar
     try {
       if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
         await interaction.reply({ content: "⚠️ Ocorreu um erro ao processar a interação.", ephemeral: true });

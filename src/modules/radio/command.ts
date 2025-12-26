@@ -19,7 +19,10 @@ function hasRadioRole(member: GuildMember | null) {
 
 export async function radioCommand(i: ChatInputCommandInteraction) {
   if (i.channelId !== RADIO_CHANNEL_ID) {
-    await i.reply({ ephemeral: true, content: "📻 Use o comando **apenas** no canal do rádio." });
+    await i.reply({
+      ephemeral: true,
+      content: "📻 Use o comando **apenas** no canal do rádio.",
+    });
     return;
   }
 
