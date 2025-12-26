@@ -9,28 +9,19 @@ import {
 import { createLogger } from "../core/logger.js";
 import { loadEnv } from "../core/env.js";
 
-// setup (se você já tem, mantém seus imports)
+// ✅ setup: importe só o que existe no seu setup.js
 import {
   setupCommand,
   setupPageButton,
   setupPublishButton,
   setupValueSelect,
-  setupModalSubmit,
-  setupModalOpen,
 } from "../modules/setup/setup.js";
 
 // tickets
 import { handleTicketButton } from "../modules/tickets/tickets.js";
 
-// whitelist (se você já tem, mantém seus imports)
-// import { handleWhitelistButton } from "../modules/whitelist/whitelist.js";
-
 function isSetupButton(id: string) {
-  return (
-    id.startsWith("setup:") ||
-    id.startsWith("setup_page:") ||
-    id.startsWith("setup_publish:")
-  );
+  return id.startsWith("setup:") || id.startsWith("setup_page:") || id.startsWith("setup_publish:");
 }
 
 export async function handleInteraction(interaction: Interaction) {
@@ -38,7 +29,7 @@ export async function handleInteraction(interaction: Interaction) {
   const log = createLogger(env.LOG_LEVEL ?? "info");
 
   try {
-    // Slash Commands
+    // Slash commands
     if (interaction.isChatInputCommand()) {
       const i = interaction as ChatInputCommandInteraction;
 
@@ -47,8 +38,6 @@ export async function handleInteraction(interaction: Interaction) {
         return;
       }
 
-      // se você tiver outros comandos (ping/painel), trate aqui
-      // if (i.commandName === "painel") ...
       return;
     }
 
@@ -56,13 +45,9 @@ export async function handleInteraction(interaction: Interaction) {
     if (interaction.isButton()) {
       const i = interaction as ButtonInteraction;
 
-      // Setup buttons
+      // setup buttons
       if (isSetupButton(i.customId)) {
-        if (i.customId.startsWith("setup:")) {
-          await setupPageButton(i);
-          return;
-        }
-        if (i.customId.startsWith("setup_page:")) {
+        if (i.customId.startsWith("setup:") || i.customId.startsWith("setup_page:")) {
           await setupPageButton(i);
           return;
         }
@@ -72,19 +57,16 @@ export async function handleInteraction(interaction: Interaction) {
         }
       }
 
-      // Ticket buttons
+      // ticket buttons
       if (i.customId.startsWith("ticket:")) {
         await handleTicketButton(i);
         return;
       }
 
-      // Whitelist buttons (se existir)
-      // if (i.customId.startsWith("whitelist:")) { await handleWhitelistButton(i); return; }
-
       return;
     }
 
-    // Select Menus
+    // Select menus
     if (interaction.isStringSelectMenu()) {
       const i = interaction as StringSelectMenuInteraction;
 
@@ -96,28 +78,16 @@ export async function handleInteraction(interaction: Interaction) {
       return;
     }
 
-    // Modals
+    // Modals (se seu projeto usa modal no setup, trate aqui quando existir export)
     if (interaction.isModalSubmit()) {
       const i = interaction as ModalSubmitInteraction;
-
-      if (i.customId.startsWith("setup_modal:")) {
-        await setupModalSubmit(i);
-        return;
-      }
-
+      // sem handlers por enquanto
       return;
-    }
-
-    // Modal open trigger (se você usa botão que abre modal)
-    // (normalmente fica no botão; mas deixei aqui se sua implementação usa)
-    if ((interaction as any).isModalSubmit?.() === false) {
-      // no-op
     }
   } catch (err) {
     console.error("Interaction error:", err);
     log.error({ err }, "Interaction error");
 
-    // tenta responder sem quebrar o fluxo
     try {
       if (
         (interaction as any).isRepliable?.() &&
@@ -130,7 +100,7 @@ export async function handleInteraction(interaction: Interaction) {
         });
       }
     } catch {
-      // ignora
+      // ignore
     }
   }
 }
