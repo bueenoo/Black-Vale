@@ -93,9 +93,6 @@ const CONFIG_ITEMS: Array<{
   { key: "ticketDeleteDelaySec", label: "⏱️ Delay delete", type: "number", desc: "Delay em segundos." },
 ];
 
-// -----------------------------
-// Menu builders
-// -----------------------------
 function mainMenuRow() {
   const menu = new StringSelectMenuBuilder()
     .setCustomId("setup_select:item")
@@ -109,10 +106,7 @@ function mainMenuRow() {
 
 function publishRow() {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("setup_publish:all")
-      .setLabel("🚀 Publicar painéis")
-      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("setup_publish:all").setLabel("🚀 Publicar painéis").setStyle(ButtonStyle.Success),
   );
 }
 
@@ -122,9 +116,6 @@ function backRow() {
   );
 }
 
-// -----------------------------
-// Save config
-// -----------------------------
 async function saveConfig(guildId: string, key: ConfigItem, value: any) {
   await prisma.guildConfig.upsert({
     where: { guildId },
@@ -134,22 +125,88 @@ async function saveConfig(guildId: string, key: ConfigItem, value: any) {
 }
 
 // -----------------------------
-// Exports (o interactionCreate espera esses nomes)
+// Exports esperados pelo handler
 // -----------------------------
 export async function setupCommand(interaction: ChatInputCommandInteraction) {
   await ensureRepliable(interaction);
 
   const embed = new EmbedBuilder()
     .setTitle("⚙️ Setup — Blackbot")
-    .setDescription(
-      [
-        "Selecione o item que deseja configurar.",
-        "✅ O valor salvo será aplicado para este servidor (guild).",
-        "",
-        "Depois clique em **Publicar painéis**.",
-      ].join("\n"),
-    );
+    .setDescription("Selecione o item que deseja configurar e depois publique os painéis.");
 
   await edit(interaction, {
     embeds: [embed],
-    components: [mainMenuRow(), publish]()
+    components: [mainMenuRow(), publishRow()],
+  });
+}
+
+export async function setupPageButton(interaction: ButtonInteraction) {
+  await ensureRepliable(interaction);
+
+  if (interaction.customId === "setup:home") {
+    const embed = new EmbedBuilder().setTitle("⚙️ Setup — Blackbot").setDescription("Selecione o item que deseja configurar.");
+    await edit(interaction, { embeds: [embed], components: [mainMenuRow(), publishRow()] });
+    return;
+  }
+
+  await edit(interaction, { content: "⚠️ Botão desconhecido.", components: [mainMenuRow(), publishRow()] });
+}
+
+export async function setupValueSelect(interaction: StringSelectMenuInteraction) {
+  await ensureRepliable(interaction);
+
+  // escolher item
+  if (interaction.customId === "setup_select:item") {
+    const key = interaction.values[0] as ConfigItem;
+    const item = CONFIG_ITEMS.find((x) => x.key === key);
+
+    if (!item) {
+      await edit(interaction, { content: "⚠️ Item inválido.", components: [mainMenuRow(), publishRow()] });
+      return;
+    }
+
+    if (item.type === "channel" || item.type === "category") {
+      const ch = new ChannelSelectMenuBuilder()
+        .setCustomId(`setup_select:value:${key}`)
+        .setPlaceholder("Selecione um canal")
+        .setMinValues(1)
+        .setMaxValues(1)
+        .setChannelTypes(item.type === "category" ? ChannelType.GuildCategory : ChannelType.GuildText);
+
+      const row = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(ch);
+
+      await edit(interaction, {
+        content: `✅ Configure: **${item.label}**\n${item.desc}`,
+        embeds: [],
+        components: [row, backRow()],
+      });
+      return;
+    }
+
+    if (item.type === "role") {
+      const r = new RoleSelectMenuBuilder()
+        .setCustomId(`setup_select:value:${key}`)
+        .setPlaceholder("Selecione um cargo")
+        .setMinValues(1)
+        .setMaxValues(1);
+
+      const row = new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(r);
+
+      await edit(interaction, {
+        content: `✅ Configure: **${item.label}**\n${item.desc}`,
+        embeds: [],
+        components: [row, backRow()],
+      });
+      return;
+    }
+
+    await edit(interaction, {
+      content: `ℹ️ Este item é manual (texto/número): **${item.label}**`,
+      embeds: [],
+      components: [backRow()],
+    });
+    return;
+  }
+
+  // salvar valor
+  if
