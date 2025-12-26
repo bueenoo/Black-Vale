@@ -1,23 +1,30 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel, Client } from "discord.js";
 
-export async function publishWhitelistPanels(panelChannel: TextChannel, startChannel: TextChannel) {
-  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("wl:request").setLabel("📜 Whitelist").setStyle(ButtonStyle.Primary)
+/**
+ * Publica o painel de whitelist no canal informado.
+ * Aceita um segundo argumento (client) apenas por compatibilidade com chamadas antigas.
+ */
+export async function publishWhitelistPanels(channel: TextChannel, _client?: Client) {
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("whitelist:start")
+      .setLabel("📜 Iniciar Whitelist")
+      .setStyle(ButtonStyle.Primary),
   );
 
-  const panelMessage = await panelChannel.send({
-    content: "🕯️ **Reaja abaixo para Fazer a sua Whitelist**\nClique no botão para receber acesso e iniciar.",
-    components: [row1],
+  const message = await channel.send({
+    content:
+      "📜 **Whitelist — Início**\n\n" +
+      "Clique no botão abaixo para iniciar o interrogatório.\n" +
+      "Responda com atenção — o Vale não perdoa mentiras.",
+    components: [row],
   });
 
-  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("wl:start").setLabel("Iniciar Whitelist").setStyle(ButtonStyle.Success)
-  );
-
-  const startMessage = await startChannel.send({
-    content: "🎙️ **Interrogatório — Iniciar Whitelist**\nClique para começar as perguntas.",
-    components: [row2],
-  });
-
-  return { panelMessageId: panelMessage.id, startMessageId: startMessage.id };
+  return message;
 }
+
+/**
+ * Alias (singular) para compatibilidade com imports antigos:
+ * import { publishWhitelistPanel } from "../whitelist/panels.js";
+ */
+export const publishWhitelistPanel = publishWhitelistPanels;
