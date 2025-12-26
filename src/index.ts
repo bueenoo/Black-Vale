@@ -16,8 +16,6 @@ async function main() {
     await ensureGuildConfig(env.DISCORD_GUILD_ID);
   }
 
-  await registerCommands(env);
-
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -31,9 +29,17 @@ async function main() {
   (globalThis as any).client = client;
   (globalThis as any).__blackbot_client = client;
 
-  client.once("clientReady", () => {
+  client.once("clientReady", async () => {
     log.info({ tag: client.user?.tag }, "Ready");
     console.log(`Ready as ${client.user?.tag}`);
+
+    // ✅ registra/atualiza APENAS o comando /radio (sem sobrescrever os existentes)
+    try {
+      await registerCommands(client, env);
+    } catch (err) {
+      console.error("Command registration error:", err);
+      log.error({ err }, "Command registration error");
+    }
   });
 
   client.on("interactionCreate", handleInteraction);
@@ -45,4 +51,3 @@ main().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
-

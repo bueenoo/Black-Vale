@@ -15,9 +15,8 @@ import { breakIntoRadioLines, sanitizeRadioText } from "./utils.js";
 export const RADIO_CHANNEL_ID = "1453867021140754543"; // 📻｜radio-bitterroot
 export const RADIO_PUBLISH_ROLE_ID = "1453868618172596509"; // cargo que pode publicar
 
-const COOLDOWN_MS = 2 * 60 * 1000; // 2 min por usuário (ajuste se quiser)
+const COOLDOWN_MS = 2 * 60 * 1000; // 2 min por usuário
 
-// memória simples (se você tiver DB, melhor)
 const lastSentAt = new Map<string, number>();
 
 function hasRadioRole(member: GuildMember | null) {
@@ -49,9 +48,7 @@ export async function handleRadioTypeSelect(i: StringSelectMenuInteraction) {
 
   const type = i.values[0] as RadioType;
 
-  const modal = new ModalBuilder()
-    .setCustomId(`radio:submit:${type}`)
-    .setTitle("📻 Nova Transmissão");
+  const modal = new ModalBuilder().setCustomId(`radio:submit:${type}`).setTitle("📻 Nova Transmissão");
 
   const signalLine = new TextInputBuilder()
     .setCustomId("signalLine")
@@ -111,15 +108,9 @@ export async function handleRadioSubmit(i: ModalSubmitInteraction) {
   const signalLine = sanitizeRadioText(signalLineRaw);
   const bodySan = sanitizeRadioText(bodyRaw);
 
-  // força estilo rádio
   const body = breakIntoRadioLines(bodySan, 42);
 
-  const text = buildRadioText({
-    status,
-    type,
-    signalLine,
-    body,
-  });
+  const text = buildRadioText({ status, type, signalLine, body });
 
   const ch = await i.client.channels.fetch(RADIO_CHANNEL_ID).catch(() => null);
   if (!ch || ch.type !== ChannelType.GuildText) {
@@ -133,8 +124,5 @@ export async function handleRadioSubmit(i: ModalSubmitInteraction) {
   await ch.send({ content: text, allowedMentions: { parse: [] } });
   lastSentAt.set(userId, now);
 
-  await i.reply({
-    ephemeral: true,
-    content: "✅ Transmissão enviada. O vale ouviu.",
-  });
+  await i.reply({ ephemeral: true, content: "✅ Transmissão enviada. O vale ouviu." });
 }

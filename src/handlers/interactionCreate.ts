@@ -27,6 +27,10 @@ import {
   handleWhitelistRejectReasonModal,
 } from "../modules/whitelist/handler.js";
 
+// radio
+import { radioCommand } from "../modules/radio/command.js";
+import { handleRadioTypeSelect, handleRadioSubmit } from "../modules/radio/handler.js";
+
 function isSetupButton(id: string) {
   return id.startsWith("setup:") || id.startsWith("setup_page:") || id.startsWith("setup_publish:");
 }
@@ -44,6 +48,12 @@ export async function handleInteraction(interaction: Interaction) {
         await setupCommand(i);
         return;
       }
+
+      if (i.commandName === "radio") {
+        await radioCommand(i);
+        return;
+      }
+
       return;
     }
 
@@ -94,6 +104,13 @@ export async function handleInteraction(interaction: Interaction) {
         await setupValueSelect(interaction);
         return;
       }
+
+      // radio select
+      if (interaction.isStringSelectMenu() && interaction.customId === "radio:type_select") {
+        await handleRadioTypeSelect(interaction);
+        return;
+      }
+
       return;
     }
 
@@ -108,6 +125,12 @@ export async function handleInteraction(interaction: Interaction) {
 
       if (i.customId.startsWith("wl:reject_reason:")) {
         await handleWhitelistRejectReasonModal(i);
+        return;
+      }
+
+      // radio
+      if (i.customId.startsWith("radio:submit:")) {
+        await handleRadioSubmit(i);
         return;
       }
 

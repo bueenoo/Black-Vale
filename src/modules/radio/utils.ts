@@ -3,8 +3,8 @@ export function sanitizeRadioText(input: string) {
 
   // remove @everyone/@here e menções diretas
   t = t.replace(/@everyone|@here/gim, "[...]");
-  t = t.replace(/<@!?(\d+)>/g, "[...]");
-  t = t.replace(/<@&(\d+)>/g, "[...]");
+  t = t.replace(/<@!?([0-9]+)>/g, "[...]");
+  t = t.replace(/<@&([0-9]+)>/g, "[...]");
 
   // remove links (mantém imersão)
   t = t.replace(/https?:\/\/\S+/gim, "[sinal perdido]");
