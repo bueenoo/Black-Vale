@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WhitelistStatus {
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum TicketType {
+  SUPPORT
+  REPORT
+  DONATION
+}
+
+enum TicketStatus {
+  OPEN
+  CLOSED
+}
+
+enum ModerationActionType {
+  TIMEOUT
+  WARN
+  ANTISPAM_BLOCK
+  LINK_BLOCK
+}
+
+model GuildConfig {
+  guildId   String   @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  brandName   String?
+  brandColor  Int?
+  brandFooter String?
+
+  welcomeChannelId String?
+
+  whitelistPanelChannelId      String?
+  whitelistPanelMessageId      String?
+  whitelistStartPanelChannelId String?
+  whitelistStartPanelMessageId String?
+
+  whitelistRoleId             String?
+  whitelistAccessChannelId    String?
+  whitelistStaffChannelId     String?
+  whitelistPreResultRoleId    String?
+  whitelistApprovedRoleId     String?
+  whitelistRejectedRoleId     String?
+  whitelistRejectLogChannelId String?
+  staffRoleId                 String?
+
+  ticketPanelChannelId String?
+  ticketPanelMessageId String?
+  ticketCategoryId     String?
+  ticketLogChannelId   String?
+  ticketDeleteDelaySec Int      @default(10)
+
+  modLogChannelId String?
+
+  applications      WhitelistApplication[]
+  tickets           Ticket[]
+  moderationActions ModerationAction[]
+}
+
+model WhitelistApplication {
+  id          String          @id @default(cuid())
+  guildId     String
+  userId      String
+  status      WhitelistStatus @default(IN_PROGRESS)
+  currentStep Int             @default(0)
+  answers     Json            @default("{}")
+
+  submittedAt  DateTime?
+  decidedAt    DateTime?
+  decidedById  String?
+  rejectReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  guild GuildConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@unique([guildId, userId])
+  @@index([guildId, status])
+}
+
+model Ticket {
+  id         String       @id @default(cuid())
+  guildId    String
+  userId     String
+  channelId  String
+  type       TicketType
+  status     TicketStatus @default(OPEN)
+
+  createdAt  DateTime @default(now())
+  closedAt   DateTime?
+  closedById String?
+
+  guild GuildConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@index([guildId, channelId])
+  @@index([guildId, userId])
+}
+
+model ModerationAction {
+  id         String               @id @default(cuid())
+  guildId    String
+  userId     String
+  actionType ModerationActionType
+  reason     String?
+  metadata   Json?
+  actorId    String?
+  createdAt  DateTime @default(now())
+
+  guild GuildConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@index([guildId, userId])
+}
