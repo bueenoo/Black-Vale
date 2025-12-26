@@ -14,52 +14,46 @@ import {
 
 export async function handleInteraction(interaction: Interaction) {
   try {
-    /* =========================
-       SLASH COMMANDS
-    ========================= */
+    /* ===================== SLASH COMMANDS ===================== */
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === "setup") {
-        await setupCommand(interaction);
-        return;
+        await setupCommand(interaction as ChatInputCommandInteraction);
       }
+      return;
     }
 
-    /* =========================
-       SELECT MENUS
-    ========================= */
-    if (interaction.isStringSelectMenu()) {
-      if (interaction.customId.startsWith("setup:")) {
-        await setupValueSelect(interaction);
-        return;
-      }
-    }
-
-    /* =========================
-       BUTTONS
-    ========================= */
+    /* ===================== BOTÕES ===================== */
     if (interaction.isButton()) {
-      if (interaction.customId.startsWith("setup:page:")) {
-        await setupPageButton(interaction);
+      const btn = interaction as ButtonInteraction;
+
+      if (btn.customId.startsWith("setup:page:")) {
+        await setupPageButton(btn);
         return;
       }
 
-      if (interaction.customId.startsWith("setup:publish")) {
-        await setupPublishButton(interaction);
+      if (btn.customId === "setup:publish") {
+        await setupPublishButton(btn);
         return;
       }
     }
-  } catch (error) {
-    console.error("Interaction error:", error);
 
-    if (
-      interaction.isRepliable() &&
-      !interaction.replied &&
-      !interaction.deferred
-    ) {
+    /* ===================== SELECT MENU ===================== */
+    if (interaction.isStringSelectMenu()) {
+      const select = interaction as StringSelectMenuInteraction;
+
+      if (select.customId === "setup:value") {
+        await setupValueSelect(select);
+        return;
+      }
+    }
+  } catch (err) {
+    console.error("Interaction error:", err);
+
+    if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
       await interaction.reply({
-        content: "❌ Ocorreu um erro ao processar esta interação.",
         ephemeral: true,
-      }).catch(() => {});
+        content: "❌ Ocorreu um erro ao processar esta interação.",
+      });
     }
   }
 }
