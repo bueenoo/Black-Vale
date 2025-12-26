@@ -24,6 +24,7 @@ export async function setupCommand(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // evita InteractionAlreadyReplied
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({ ephemeral: true });
   }
@@ -64,22 +65,37 @@ export async function setupPageButton(interaction: ButtonInteraction) {
 
   await interaction.deferUpdate();
 
+  // IMPORTANTÍSSIMO:
+  // O "value" precisa ser exatamente o nome do campo no Prisma (schema.prisma)
   let options: { label: string; value: string }[] = [];
 
   if (interaction.customId === "setup:page:welcome") {
-    options = [{ label: "Canal de boas-vindas", value: "welcomeChannel" }];
+    options = [
+      { label: "Canal de boas-vindas (welcomeChannelId)", value: "welcomeChannelId" },
+    ];
   }
 
   if (interaction.customId === "setup:page:tickets") {
     options = [
-      { label: "Canal do painel de tickets", value: "ticketPanel" },
-      { label: "Categoria dos tickets", value: "ticketCategory" },
-      { label: "Cargo da staff", value: "staffRole" },
+      { label: "Canal do painel de tickets (ticketPanelChannelId)", value: "ticketPanelChannelId" },
+      { label: "Categoria dos tickets (ticketCategoryId)", value: "ticketCategoryId" },
+      { label: "Cargo da staff (staffRoleId)", value: "staffRoleId" },
+      { label: "Canal de logs/transcript (ticketLogChannelId)", value: "ticketLogChannelId" },
     ];
   }
 
   if (interaction.customId === "setup:page:whitelist") {
-    options = [{ label: "Canal do painel da whitelist", value: "whitelistPanel" }];
+    options = [
+      { label: "Canal do painel da whitelist (whitelistPanelChannelId)", value: "whitelistPanelChannelId" },
+      { label: "Canal staff whitelist (whitelistStaffChannelId)", value: "whitelistStaffChannelId" },
+      { label: "Canal de reprovação (whitelistRejectLogChannelId)", value: "whitelistRejectLogChannelId" },
+      { label: "Cargo aprovado (whitelistApprovedRoleId)", value: "whitelistApprovedRoleId" },
+      { label: "Cargo reprovado (whitelistRejectedRoleId)", value: "whitelistRejectedRoleId" },
+      { label: "Cargo pré-resultado (whitelistPreResultRoleId)", value: "whitelistPreResultRoleId" },
+      { label: "Cargo whitelist (acesso) (whitelistRoleId)", value: "whitelistRoleId" },
+      { label: "Canal acesso whitelist (whitelistAccessChannelId)", value: "whitelistAccessChannelId" },
+      { label: "Canal do painel iniciar (whitelistStartPanelChannelId)", value: "whitelistStartPanelChannelId" },
+    ];
   }
 
   const select = new StringSelectMenuBuilder()
@@ -90,7 +106,9 @@ export async function setupPageButton(interaction: ButtonInteraction) {
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
 
   await interaction.editReply({
-    content: "Selecione o item que deseja configurar.\nO valor será salvo como **este canal atual**.",
+    content:
+      "Selecione o item que deseja configurar.\n" +
+      "✅ O valor será salvo como **este canal atual** (ou use o canal onde você está agora).",
     components: [row],
   });
 }
@@ -103,33 +121,36 @@ export async function setupValueSelect(interaction: StringSelectMenuInteraction)
 
   await interaction.deferUpdate();
 
-  const key = interaction.values[0];
+  const key = interaction.values[0]; // agora é tipo "welcomeChannelId"
+
+  // Salva o ID do canal atual
+  const value = interaction.channelId;
 
   await prisma.guildConfig.upsert({
     where: { guildId: interaction.guildId },
     create: {
       guildId: interaction.guildId,
-      [key]: interaction.channelId,
+      [key]: value,
     } as any,
     update: {
-      [key]: interaction.channelId,
+      [key]: value,
     } as any,
   });
 
   await interaction.editReply({
-    content: `✅ Configuração **${key}** salva com sucesso.`,
+    content: `✅ Configuração salva: **${key}** = \`${value}\``,
     components: [],
   });
 }
 
 /* ======================================================
-   PUBLICAR PAINÉIS
+   PUBLICAR PAINÉIS (stub)
 ====================================================== */
 export async function setupPublishButton(interaction: ButtonInteraction) {
   await interaction.deferUpdate();
 
   await interaction.editReply({
-    content: "🚀 Painéis publicados com sucesso.\n(Fluxo completo será expandido depois.)",
+    content: "🚀 OK! (Publicação dos painéis será aplicada no próximo passo.)",
     components: [],
   });
 }
