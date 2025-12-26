@@ -8,13 +8,12 @@ export async function publishWhitelistPanel(channel: TextChannel) {
       .setStyle(ButtonStyle.Primary),
   );
 
-  const message = await channel.send({
+  return channel.send({
     content:
-      "📜 **Whitelist — Início**\n\n" +
+      "📜 **Whitelist**\n\n" +
       "Clique no botão abaixo para iniciar o interrogatório.\n" +
-      "Responda com atenção — o Vale não perdoa mentiras.",
+      "Responda com atenção.",
     components: [row],
   });
-
-  return message;
 }
+
