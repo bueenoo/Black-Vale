@@ -1,10 +1,6 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel, Client } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel } from "discord.js";
 
-/**
- * Publica o painel de whitelist no canal informado.
- * Aceita um segundo argumento (client) apenas por compatibilidade com chamadas antigas.
- */
-export async function publishWhitelistPanels(channel: TextChannel, _client?: Client) {
+export async function publishWhitelistPanel(channel: TextChannel) {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("whitelist:start")
@@ -22,9 +18,3 @@ export async function publishWhitelistPanels(channel: TextChannel, _client?: Cli
 
   return message;
 }
-
-/**
- * Alias (singular) para compatibilidade com imports antigos:
- * import { publishWhitelistPanel } from "../whitelist/panels.js";
- */
-export const publishWhitelistPanel = publishWhitelistPanels;
