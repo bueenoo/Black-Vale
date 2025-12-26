@@ -12,6 +12,7 @@ enum WhitelistStatus {
   SUBMITTED
   APPROVED
   REJECTED
+  ADJUST
   EXPIRED
 }
 
@@ -75,22 +76,27 @@ model WhitelistApplication {
   id          String          @id @default(cuid())
   guildId     String
   userId      String
+  userTag     String?         // Discord tag/username (ex: UB#0001)
+  steamId     String?         // SteamID64 (17 dígitos) — obrigatório na submissão
+
   status      WhitelistStatus @default(IN_PROGRESS)
   currentStep Int             @default(0)
   answers     Json            @default("{}")
 
-  submittedAt  DateTime?
-  decidedAt    DateTime?
-  decidedById  String?
-  rejectReason String?
+  submittedAt   DateTime?
+  decidedAt     DateTime?
+  decidedById   String?
+  decidedByTag  String?
+  decisionNote  String?       // motivo (reprovação ou ajuste)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   guild GuildConfig @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
 
-  @@unique([guildId, userId])
+  @@index([guildId, userId])
   @@index([guildId, status])
+  @@index([guildId, steamId])
 }
 
 model Ticket {
