@@ -94,7 +94,7 @@ const CONFIG_ITEMS: Array<{
 ];
 
 // -----------------------------
-// Menus
+// Menu builders
 // -----------------------------
 function mainMenuRow() {
   const menu = new StringSelectMenuBuilder()
@@ -116,6 +116,12 @@ function publishRow() {
   );
 }
 
+function backRow() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("setup:home").setLabel("⬅️ Voltar").setStyle(ButtonStyle.Secondary),
+  );
+}
+
 // -----------------------------
 // Save config
 // -----------------------------
@@ -128,65 +134,22 @@ async function saveConfig(guildId: string, key: ConfigItem, value: any) {
 }
 
 // -----------------------------
-// Commands
+// Exports (o interactionCreate espera esses nomes)
 // -----------------------------
 export async function setupCommand(interaction: ChatInputCommandInteraction) {
   await ensureRepliable(interaction);
 
   const embed = new EmbedBuilder()
     .setTitle("⚙️ Setup — Blackbot")
-    .setDescription("Selecione o item que deseja configurar.");
+    .setDescription(
+      [
+        "Selecione o item que deseja configurar.",
+        "✅ O valor salvo será aplicado para este servidor (guild).",
+        "",
+        "Depois clique em **Publicar painéis**.",
+      ].join("\n"),
+    );
 
   await edit(interaction, {
     embeds: [embed],
-    components: [mainMenuRow(), publishRow()],
-  });
-}
-
-export async function setupValueSelect(interaction: StringSelectMenuInteraction) {
-  await ensureRepliable(interaction);
-
-  if (!interaction.customId.startsWith("setup_select:value:")) return;
-
-  const key = interaction.customId.split(":")[2] as ConfigItem;
-  const value = interaction.values[0];
-
-  await saveConfig(interaction.guildId!, key, value);
-
-  await edit(interaction, {
-    content: `✅ Configuração salva: **${key}**`,
-    components: [mainMenuRow(), publishRow()],
-  });
-}
-
-export async function setupPublishButton(interaction: ButtonInteraction) {
-  await ensureRepliable(interaction);
-
-  const guild = interaction.guild;
-  if (!guild) return;
-
-  const cfg = await prisma.guildConfig.findUnique({
-    where: { guildId: guild.id },
-  });
-
-  // Tickets
-  if (cfg?.ticketPanelChannelId) {
-    const ch = await guild.channels.fetch(cfg.ticketPanelChannelId).catch(() => null);
-    if (ch?.type === ChannelType.GuildText) {
-      await publishTicketPanel(ch as TextChannel);
-    }
-  }
-
-  // Whitelist
-  if (cfg?.whitelistPanelChannelId) {
-    const ch = await guild.channels.fetch(cfg.whitelistPanelChannelId).catch(() => null);
-    if (ch?.type === ChannelType.GuildText) {
-      await publishWhitelistPanel(ch as TextChannel);
-    }
-  }
-
-  await edit(interaction, {
-    content: "🚀 Painéis publicados com sucesso.",
-    components: [mainMenuRow(), publishRow()],
-  });
-}
+    components: [mainMenuRow(), publish]()
