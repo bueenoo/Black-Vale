@@ -3,210 +3,337 @@ import {
   ButtonInteraction,
   StringSelectMenuInteraction,
   ActionRowBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   ButtonBuilder,
   ButtonStyle,
-  StringSelectMenuBuilder,
   ChannelType,
+  RoleSelectMenuBuilder,
+  ChannelSelectMenuBuilder,
+  MentionableSelectMenuBuilder,
+  EmbedBuilder,
+  TextChannel,
   PermissionFlagsBits,
 } from "discord.js";
 
 import { prisma } from "../../core/prisma.js";
 
-/* ======================================================
-   Helpers: publicar painéis
-====================================================== */
-async function publishTicketsPanel(guildId: string) {
-  const cfg = await prisma.guildConfig.findUnique({ where: { guildId } });
-  if (!cfg?.ticketPanelChannelId) throw new Error("ticketPanelChannelId não configurado no /setup.");
+// (Opcional) publishers dos painéis — se você já tem esses arquivos, deixa.
+// Se não tiver, comente os imports e o publish vai só responder OK.
+import { publishTicketPanel } from "../tickets/panel.js";
+import { publishWhitelistPanel } from "../whitelist/panels.js";
 
-  const channel = await (globalThis as any).client.channels.fetch(cfg.ticketPanelChannelId);
-  if (!channel || !channel.isTextBased()) throw new Error("Canal do painel de tickets inválido.");
-
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("tickets:create:SUPPORT").setLabel("⚙️ Suporte Técnico").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("tickets:create:REPORT").setLabel("🚨 Denúncia").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId("tickets:create:DONATION").setLabel("💰 Doações").setStyle(ButtonStyle.Success)
-  );
-
-  const msg = await channel.send({
-    content:
-      "**🎫 TICKETS — BLACK**\n" +
-      "Clique no botão abaixo para abrir um ticket.\n" +
-      "Seu ticket será privado (você + staff).",
-    components: [row],
-  });
-
-  await prisma.guildConfig.update({
-    where: { guildId },
-    data: { ticketPanelMessageId: msg.id },
-  });
-
-  return msg.id;
+// -----------------------------
+// Helpers
+// -----------------------------
+async function ensureRepliable(i: any) {
+  if (!i.deferred && !i.replied) {
+    await i.deferReply({ ephemeral: true });
+  }
 }
 
-async function publishWhitelistPanel(guildId: string) {
-  const cfg = await prisma.guildConfig.findUnique({ where: { guildId } });
-  if (!cfg?.whitelistPanelChannelId) throw new Error("whitelistPanelChannelId não configurado no /setup.");
-
-  const channel = await (globalThis as any).client.channels.fetch(cfg.whitelistPanelChannelId);
-  if (!channel || !channel.isTextBased()) throw new Error("Canal do painel de whitelist inválido.");
-
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("whitelist:start").setLabel("📜 Iniciar Whitelist").setStyle(ButtonStyle.Primary)
-  );
-
-  const msg = await channel.send({
-    content:
-      "**BLACK | VALE DOS OSSOS**\n\n" +
-      "Se você chegou até aqui,\n" +
-      "Isso não significa que será aceito.\n" +
-      "O Vale já está te observando.\n\n" +
-      "A whitelist é um interrogatório.\n" +
-      "Não há respostas certas.\n" +
-      "Há coerência… ou exclusão.\n\n" +
-      "Clique no botão abaixo.\n" +
-      "Não existe segunda chance.\n" +
-      "O Vale está ouvindo.",
-    components: [row],
-  });
-
-  await prisma.guildConfig.update({
-    where: { guildId },
-    data: { whitelistPanelMessageId: msg.id },
-  });
-
-  return msg.id;
+async function edit(i: any, payload: any) {
+  // Sempre editar a resposta deferred
+  return i.editReply(payload);
 }
 
-/* ======================================================
-   /setup — COMANDO PRINCIPAL
-====================================================== */
+function opt(label: string, value: string, description?: string) {
+  const o = new StringSelectMenuOptionBuilder().setLabel(label).setValue(value);
+  if (description) o.setDescription(description.slice(0, 100));
+  return o;
+}
+
+// -----------------------------
+// Config items (LIMITADO a 25!)
+// -----------------------------
+type ConfigItem =
+  | "welcomeChannelId"
+  | "staffRoleId"
+  | "modLogChannelId"
+  | "brandName"
+  | "brandFooter"
+  | "brandColor"
+  | "whitelistPanelChannelId"
+  | "whitelistAccessChannelId"
+  | "whitelistStartPanelChannelId"
+  | "whitelistStaffChannelId"
+  | "whitelistRejectLogChannelId"
+  | "whitelistCategoryId"
+  | "whitelistRoleId"
+  | "whitelistPreResultRoleId"
+  | "whitelistApprovedRoleId"
+  | "whitelistRejectedRoleId"
+  | "ticketPanelChannelId"
+  | "ticketCategoryId"
+  | "ticketLogChannelId"
+  | "ticketDeleteDelaySec";
+
+const CONFIG_ITEMS: Array<{
+  key: ConfigItem;
+  label: string;
+  type: "channel" | "category" | "role" | "text" | "number";
+  desc: string;
+}> = [
+  { key: "welcomeChannelId", label: "👋 Canal de Boas-vindas", type: "channel", desc: "Canal onde o bot dá boas-vindas." },
+  { key: "staffRoleId", label: "🛡️ Cargo STAFF", type: "role", desc: "Cargo que terá acesso aos tickets/whitelist." },
+  { key: "modLogChannelId", label: "🧾 Canal de logs (moderação)", type: "channel", desc: "Opcional: logs gerais de moderação." },
+
+  { key: "brandName", label: "🏷️ Nome (Brand)", type: "text", desc: "Nome usado nos embeds/painéis." },
+  { key: "brandFooter", label: "📌 Rodapé (Brand)", type: "text", desc: "Texto do rodapé dos embeds." },
+  { key: "brandColor", label: "🎨 Cor (Brand)", type: "number", desc: "Cor numérica (ex: 0x000000 -> 0 / 0xFF0000 -> 16711680)." },
+
+  // whitelist
+  { key: "whitelistPanelChannelId", label: "📜 Canal do painel Whitelist", type: "channel", desc: "Onde publicar o painel da whitelist." },
+  { key: "whitelistAccessChannelId", label: "🔓 Canal de acesso Whitelist", type: "channel", desc: "Canal que o cargo whitelist libera." },
+  { key: "whitelistStartPanelChannelId", label: "🧩 Canal do botão Iniciar WL", type: "channel", desc: "Canal onde fica o botão Iniciar Whitelist." },
+  { key: "whitelistStaffChannelId", label: "👁️ Canal staff (análise WL)", type: "channel", desc: "Canal onde staff recebe as respostas." },
+  { key: "whitelistRejectLogChannelId", label: "⛔ Canal log reprovação WL", type: "channel", desc: "Opcional: canal para logs de reprovação." },
+  { key: "whitelistCategoryId", label: "📁 Categoria Whitelist (temp)", type: "category", desc: "Categoria onde criar canais temporários da whitelist." },
+  { key: "whitelistRoleId", label: "📌 Cargo: Whitelist (acesso)", type: "role", desc: "Cargo que libera o canal de whitelist." },
+  { key: "whitelistPreResultRoleId", label: "⌛ Cargo: Aguardando aprovação", type: "role", desc: "Cargo enquanto aguarda a decisão." },
+  { key: "whitelistApprovedRoleId", label: "✅ Cargo: Aprovado", type: "role", desc: "Cargo quando aprovado." },
+  { key: "whitelistRejectedRoleId", label: "❌ Cargo: Reprovado", type: "role", desc: "Cargo quando reprovado (opcional)." },
+
+  // tickets
+  { key: "ticketPanelChannelId", label: "🎫 Canal do painel Tickets", type: "channel", desc: "Onde publicar o painel de tickets." },
+  { key: "ticketCategoryId", label: "📁 Categoria Tickets", type: "category", desc: "Categoria onde criar canais de ticket." },
+  { key: "ticketLogChannelId", label: "📄 Canal logs/transcripts", type: "channel", desc: "Canal para enviar transcript HTML ao fechar." },
+  { key: "ticketDeleteDelaySec", label: "⏱️ Delay para deletar canal", type: "number", desc: "Segundos até deletar o canal após fechar (ex: 10)." },
+];
+
+// ✅ Garantia: não passa de 25
+if (CONFIG_ITEMS.length > 25) {
+  throw new Error("CONFIG_ITEMS excede 25 opções. Reduza a lista.");
+}
+
+// -----------------------------
+// Menu builders
+// -----------------------------
+function mainMenuRow() {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("setup_select:item")
+    .setPlaceholder("Selecione o item que deseja definir")
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      CONFIG_ITEMS.map((x) => opt(x.label, x.key, x.desc))
+    );
+
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+}
+
+function publishRow() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("setup_publish:all")
+      .setLabel("🚀 Publicar painéis (Tickets + Whitelist)")
+      .setStyle(ButtonStyle.Success),
+  );
+}
+
+function backRow() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("setup:home")
+      .setLabel("⬅️ Voltar")
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// -----------------------------
+// Prisma save helper
+// -----------------------------
+async function saveConfig(guildId: string, key: ConfigItem, value: any) {
+  // upsert com create/update dinâmico
+  const data: any = {};
+  data[key] = value;
+
+  await prisma.guildConfig.upsert({
+    where: { guildId },
+    create: { guildId, ...data },
+    update: data,
+  });
+}
+
+// -----------------------------
+// Public API (exports)
+// -----------------------------
 export async function setupCommand(interaction: ChatInputCommandInteraction) {
-  if (!interaction.inGuild() || !interaction.guildId) {
-    if (!interaction.replied) {
-      await interaction.reply({ ephemeral: true, content: "❌ Use este comando dentro de um servidor." });
-    }
+  await ensureRepliable(interaction);
+
+  const embed = new EmbedBuilder()
+    .setTitle("⚙️ Setup — Blackbot")
+    .setDescription(
+      [
+        "Selecione o item que deseja configurar.",
+        "✅ O valor salvo será aplicado para este servidor (guild).",
+        "",
+        "Dica: comece definindo **Cargo STAFF**, **Categoria Tickets** e **Categoria Whitelist**.",
+      ].join("\n")
+    );
+
+  await edit(interaction, {
+    embeds: [embed],
+    components: [mainMenuRow(), publishRow()],
+  });
+}
+
+export async function setupPageButton(interaction: ButtonInteraction) {
+  await ensureRepliable(interaction);
+
+  // Por enquanto só temos home/back
+  if (interaction.customId === "setup:home") {
+    const embed = new EmbedBuilder()
+      .setTitle("⚙️ Setup — Blackbot")
+      .setDescription("Selecione o item que deseja configurar.");
+
+    await edit(interaction, {
+      embeds: [embed],
+      components: [mainMenuRow(), publishRow()],
+    });
     return;
   }
 
-  // evita InteractionAlreadyReplied
-  if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ ephemeral: true });
-  }
-
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("setup:page:welcome").setLabel("👋 Boas-vindas").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("setup:page:tickets").setLabel("🎫 Tickets").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("setup:page:whitelist").setLabel("📜 Whitelist").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("setup:publish").setLabel("✅ Publicar painéis").setStyle(ButtonStyle.Success)
-  );
-
-  await interaction.editReply({
-    content: "🛠️ **Setup do Blackbot**\nEscolha o que deseja configurar:",
-    components: [row],
+  await edit(interaction, {
+    content: "⚠️ Botão de setup desconhecido.",
+    components: [mainMenuRow(), publishRow()],
   });
 }
 
-/* ======================================================
-   BOTÕES DE NAVEGAÇÃO
-====================================================== */
-export async function setupPageButton(interaction: ButtonInteraction) {
-  if (!interaction.inGuild() || !interaction.guildId) return;
-
-  await interaction.deferUpdate();
-
-  // O "value" precisa ser exatamente o nome do campo no Prisma
-  let options: { label: string; value: string }[] = [];
-
-  if (interaction.customId === "setup:page:welcome") {
-    options = [{ label: "Canal de boas-vindas", value: "welcomeChannelId" }];
-  }
-
-  if (interaction.customId === "setup:page:tickets") {
-    options = [
-      { label: "Canal do painel de tickets", value: "ticketPanelChannelId" },
-      { label: "Categoria dos tickets", value: "ticketCategoryId" },
-      { label: "Cargo da staff", value: "staffRoleId" },
-      { label: "Canal de logs/transcript", value: "ticketLogChannelId" },
-    ];
-  }
-
-  if (interaction.customId === "setup:page:whitelist") {
-    options = [
-      { label: "Canal do painel da whitelist", value: "whitelistPanelChannelId" },
-      { label: "Canal staff whitelist", value: "whitelistStaffChannelId" },
-      { label: "Canal de reprovação (log)", value: "whitelistRejectLogChannelId" },
-      { label: "Cargo aprovado", value: "whitelistApprovedRoleId" },
-      { label: "Cargo reprovado", value: "whitelistRejectedRoleId" },
-      { label: "Cargo pré-resultado", value: "whitelistPreResultRoleId" },
-      { label: "Cargo whitelist (acesso)", value: "whitelistRoleId" },
-      { label: "Canal acesso whitelist", value: "whitelistAccessChannelId" },
-      { label: "Canal painel iniciar (opcional)", value: "whitelistStartPanelChannelId" },
-    ];
-  }
-
-  const select = new StringSelectMenuBuilder()
-    .setCustomId("setup:value")
-    .setPlaceholder("Selecione o item que deseja definir")
-    .addOptions(options);
-
-  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
-
-  await interaction.editReply({
-    content:
-      "Selecione o item que deseja configurar.\n" +
-      "✅ O valor salvo será o **canal onde você executou o /setup** (canal atual).",
-    components: [row],
-  });
-}
-
-/* ======================================================
-   SELECT MENU — SALVAR CONFIGURAÇÃO
-====================================================== */
 export async function setupValueSelect(interaction: StringSelectMenuInteraction) {
-  if (!interaction.inGuild() || !interaction.guildId) return;
+  await ensureRepliable(interaction);
 
-  await interaction.deferUpdate();
+  // menu principal: escolher item
+  if (interaction.customId === "setup_select:item") {
+    const key = interaction.values[0] as ConfigItem;
+    const item = CONFIG_ITEMS.find((x) => x.key === key);
+    if (!item) {
+      await edit(interaction, { content: "⚠️ Item inválido.", components: [mainMenuRow(), publishRow()] });
+      return;
+    }
 
-  const key = interaction.values[0]; // ex: welcomeChannelId
-  const value = interaction.channelId;
+    // dependendo do tipo, abre um seletor apropriado
+    if (item.type === "channel" || item.type === "category") {
+      const ch = new ChannelSelectMenuBuilder()
+        .setCustomId(`setup_select:value:${key}`)
+        .setPlaceholder("Selecione um canal")
+        .setMinValues(1)
+        .setMaxValues(1);
 
-  await prisma.guildConfig.upsert({
-    where: { guildId: interaction.guildId },
-    create: { guildId: interaction.guildId, [key]: value } as any,
-    update: { [key]: value } as any,
-  });
+      if (item.type === "category") {
+        ch.setChannelTypes(ChannelType.GuildCategory);
+      } else {
+        ch.setChannelTypes(ChannelType.GuildText);
+      }
 
-  await interaction.editReply({
-    content: `✅ Configuração salva: **${key}** = \`${value}\``,
-    components: [],
-  });
+      const row = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(ch);
+
+      await edit(interaction, {
+        content: `✅ Configure: **${item.label}**\n${item.desc}`,
+        embeds: [],
+        components: [row, backRow()],
+      });
+      return;
+    }
+
+    if (item.type === "role") {
+      const r = new RoleSelectMenuBuilder()
+        .setCustomId(`setup_select:value:${key}`)
+        .setPlaceholder("Selecione um cargo")
+        .setMinValues(1)
+        .setMaxValues(1);
+
+      const row = new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(r);
+
+      await edit(interaction, {
+        content: `✅ Configure: **${item.label}**\n${item.desc}`,
+        embeds: [],
+        components: [row, backRow()],
+      });
+      return;
+    }
+
+    // text/number: instrução manual
+    await edit(interaction, {
+      content:
+        `✅ Configure: **${item.label}**\n` +
+        `${item.desc}\n\n` +
+        `➡️ **Envie o valor neste chat** usando o comando:\n` +
+        `\`/setup_set key:${key} value:...\`\n\n` +
+        `⚠️ (Se você não tem /setup_set, me avise e eu te envio também.)`,
+      embeds: [],
+      components: [backRow()],
+    });
+    return;
+  }
+
+  // menu de valor (channel/role)
+  if (interaction.customId.startsWith("setup_select:value:")) {
+    const key = interaction.customId.split(":")[2] as ConfigItem;
+    const guildId = interaction.guildId!;
+    if (!guildId) {
+      await edit(interaction, { content: "⚠️ Isso só funciona dentro do servidor.", components: [] });
+      return;
+    }
+
+    const item = CONFIG_ITEMS.find((x) => x.key === key);
+    if (!item) {
+      await edit(interaction, { content: "⚠️ Chave inválida.", components: [mainMenuRow(), publishRow()] });
+      return;
+    }
+
+    const selected = interaction.values[0]; // id do canal/cargo
+    await saveConfig(guildId, key, selected);
+
+    await edit(interaction, {
+      content: `✅ Configuração salva: **${key}** = \`${selected}\``,
+      components: [mainMenuRow(), publishRow()],
+    });
+    return;
+  }
+
+  await edit(interaction, { content: "⚠️ Select desconhecido.", components: [mainMenuRow(), publishRow()] });
 }
 
-/* ======================================================
-   BOTÃO — PUBLICAR PAINÉIS
-====================================================== */
 export async function setupPublishButton(interaction: ButtonInteraction) {
-  if (!interaction.inGuild() || !interaction.guildId) return;
+  await ensureRepliable(interaction);
 
-  await interaction.deferUpdate();
+  const guild = interaction.guild;
+  if (!guild) {
+    await edit(interaction, { content: "⚠️ Isso só funciona dentro do servidor.", components: [] });
+    return;
+  }
 
+  // carrega cfg
+  const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
+
+  // publica painéis onde estiver configurado
   try {
-    const ticketsMsgId = await publishTicketsPanel(interaction.guildId);
-    const wlMsgId = await publishWhitelistPanel(interaction.guildId);
+    // tickets
+    if (cfg?.ticketPanelChannelId) {
+      const ch = await guild.channels.fetch(cfg.ticketPanelChannelId).catch(() => null);
+      if (ch && ch.type === ChannelType.GuildText) {
+        await publishTicketPanel(ch as TextChannel, cfg);
+      }
+    }
 
-    await interaction.editReply({
-      content:
-        "🚀 **Painéis publicados com sucesso!**\n" +
-        `• Tickets messageId: \`${ticketsMsgId}\`\n` +
-        `• Whitelist messageId: \`${wlMsgId}\`\n\n` +
-        "Agora os botões já aparecem nos canais configurados.",
-      components: [],
+    // whitelist
+    if (cfg?.whitelistPanelChannelId) {
+      const ch = await guild.channels.fetch(cfg.whitelistPanelChannelId).catch(() => null);
+      if (ch && ch.type === ChannelType.GuildText) {
+        await publishWhitelistPanel(ch as TextChannel, cfg);
+      }
+    }
+
+    await edit(interaction, {
+      content: "🚀 OK! Se os canais estiverem configurados, os painéis foram publicados/atualizados.",
+      components: [mainMenuRow(), publishRow()],
     });
-  } catch (e: any) {
-    await interaction.editReply({
-      content: `❌ Falha ao publicar painéis: **${e?.message || String(e)}**\n\n` + "Dica: configure os canais primeiro via /setup.",
-      components: [],
+  } catch (err) {
+    console.error("publish error:", err);
+    await edit(interaction, {
+      content: "⚠️ Erro ao publicar painéis. Verifique os logs.",
+      components: [mainMenuRow(), publishRow()],
     });
   }
 }
