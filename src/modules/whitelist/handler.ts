@@ -7,8 +7,7 @@ export async function whitelistStartButton(interaction: ButtonInteraction) {
 
   await interaction.editReply({
     content:
-      "✅ Whitelist iniciada.\n\n" +
-      "⚠️ (Handler OK) Agora falta plugar o interrogatório/perguntas.\n" +
-      "Se você quiser, eu te envio o fluxo completo com perguntas em cadeia + envio pro staff.",
+      "✅ Whitelist iniciada!\n\n" +
+      "Agora a gente pluga o interrogatório (perguntas em cadeia) + envio pro staff.",
   });
 }
