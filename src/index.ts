@@ -27,7 +27,9 @@ async function main() {
     ],
   });
 
-  globalThis.__blackbot_client = client;
+  // ✅ expõe o client globalmente (compatível com o setup.ts)
+  (globalThis as any).client = client;
+  (globalThis as any).__blackbot_client = client;
 
   client.once("clientReady", () => {
     log.info({ tag: client.user?.tag }, "Ready");
@@ -43,3 +45,4 @@ main().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
+
