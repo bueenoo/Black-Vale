@@ -51,7 +51,7 @@ function countLines(v: string) {
    QUESTIONS
 ========================= */
 
-const QUESTIONS: Question[] = [
+const QUESTIONS = [
   {
     key: "steamId",
     title: "SteamID",
@@ -94,7 +94,7 @@ const QUESTIONS: Question[] = [
     style: TextInputStyle.Paragraph,
     maxLength: 1000,
   },
-];
+] satisfies Question[];
 
 /* =========================
    START WHITELIST
@@ -200,14 +200,6 @@ export async function handleWhitelistAnswerModal(interaction: ModalSubmitInterac
   if (step < QUESTIONS.length) {
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId("whitelist:start") // recomeça e abre o próximo modal pelo handler de start? (não)
-        .setLabel("Continuar")
-        .setStyle(ButtonStyle.Success)
-    );
-
-    // OBS: como "whitelist:start" inicia nova WL, aqui vamos usar um botão de próxima etapa:
-    row.setComponents(
-      new ButtonBuilder()
         .setCustomId(`wl:next:${step + 1}`)
         .setLabel("Continuar")
         .setStyle(ButtonStyle.Success)
@@ -234,11 +226,10 @@ export async function handleWhitelistAnswerModal(interaction: ModalSubmitInterac
 }
 
 /* =========================
-   BUTTON: NEXT STEP
+   BUTTON: NEXT STEP + DECISIONS
 ========================= */
 
 export async function handleWhitelistDecisionButton(interaction: ButtonInteraction) {
-  // Este handler também vai tratar wl:next:* e decisões wl:approve / wl:reject
   const guild = interaction.guild;
   if (!guild) return;
 
@@ -308,7 +299,6 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
 
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
 
-    // showModal é do ButtonInteraction — OK aqui
     await interaction.showModal(modal);
     return;
   }
@@ -374,7 +364,7 @@ async function sendToStaff(guildId: string, appId: string) {
   const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
   if (!app) return;
 
-  const client: any = globalThis.__blackbot_client;
+  const client: any = (globalThis as any).__blackbot_client;
   const guild = client?.guilds?.cache?.get(guildId);
   if (!guild) return;
 
@@ -383,16 +373,18 @@ async function sendToStaff(guildId: string, appId: string) {
 
   const a = (app.answers as any) ?? {};
 
+  const fields = [
+    { name: "Usuário", value: `<@${app.userId}> (\`${app.userId}\`)` },
+    { name: "SteamID", value: `\`${String(app.steamId ?? a.steamId ?? "—").slice(0, 32)}\`` },
+    ...QUESTIONS.filter((q) => q.key !== "steamId").map((q) => ({
+      name: q.title,
+      value: String(a[q.key] ?? "—").slice(0, 1024),
+    })),
+  ];
+
   const embed = new EmbedBuilder()
     .setTitle("📜 Whitelist — Nova aplicação")
-    .addFields(
-      { name: "Usuário", value: `<@${app.userId}> (\`${app.userId}\`)` },
-      { name: "SteamID", value: `\`${String(app.steamId ?? a.steamId ?? "—").slice(0, 32)}\`` },
-      ...QUESTIONS.filter((q) => q.key !== "steamId").map((q) => ({
-        name: q.title,
-        value: String(a[q.key] ?? "—").slice(0, 1024),
-      }))
-    );
+    .addFields(fields);
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`wl:approve:${app.id}`).setLabel("✅ Aprovar").setStyle(ButtonStyle.Success),
