@@ -8,7 +8,6 @@ import {
 import { createLogger } from "../core/logger.js";
 import { loadEnv } from "../core/env.js";
 
-// setup
 import {
   setupCommand,
   setupPageButton,
@@ -16,19 +15,18 @@ import {
   setupValueSelect,
 } from "../modules/setup/setup.js";
 
-// tickets
 import { handleTicketButton } from "../modules/tickets/tickets.js";
 
-// whitelist (IMPORTA TUDO AGORA)
 import {
   whitelistStartButton,
   handleWhitelistAnswerModal,
   handleWhitelistDecisionButton,
   handleWhitelistRejectReasonModal,
+  handleWhitelistAdjustReasonModal,
 } from "../modules/whitelist/handler.js";
 
 function isSetupButton(id: string) {
-  return id.startsWith("setup:") || id.startsWith("setup_page:") || id.startsWith("setup_publish:");
+  return id.startsWith("setup:");
 }
 
 export async function handleInteraction(interaction: Interaction) {
@@ -36,65 +34,49 @@ export async function handleInteraction(interaction: Interaction) {
   const log = createLogger(env.LOG_LEVEL ?? "info");
 
   try {
-    // Slash commands
     if (interaction.isChatInputCommand()) {
-      const i = interaction as ChatInputCommandInteraction;
-
-      if (i.commandName === "setup") {
-        await setupCommand(i);
-        return;
+      if (interaction.commandName === "setup") {
+        await setupCommand(interaction);
       }
-
       return;
     }
 
-    // Buttons
     if (interaction.isButton()) {
       const i = interaction as ButtonInteraction;
 
-      // ✅ whitelist start
       if (i.customId === "whitelist:start") {
         await whitelistStartButton(i);
         return;
       }
 
-      // ✅ whitelist staff decisions
-      if (i.customId.startsWith("wl:approve:") || i.customId.startsWith("wl:reject:")) {
+      if (
+        i.customId.startsWith("wl:approve:") ||
+        i.customId.startsWith("wl:reject:") ||
+        i.customId.startsWith("wl:adjust:")
+      ) {
         await handleWhitelistDecisionButton(i);
         return;
       }
 
-      // setup buttons
       if (isSetupButton(i.customId)) {
-        if (i.customId.startsWith("setup:") || i.customId.startsWith("setup_page:")) {
-          await setupPageButton(i);
-          return;
-        }
-        if (i.customId.startsWith("setup_publish:")) {
-          await setupPublishButton(i);
-          return;
-        }
+        if (i.customId.includes("publish")) await setupPublishButton(i);
+        else await setupPageButton(i);
+        return;
       }
 
-      // ticket buttons
       if (i.customId.startsWith("ticket:")) {
         await handleTicketButton(i);
         return;
       }
-
-      return;
     }
 
-    // ✅ Select menus (StringSelect + ChannelSelect + RoleSelect)
     if (interaction.isAnySelectMenu()) {
       if (interaction.customId.startsWith("setup_select:")) {
         await setupValueSelect(interaction);
-        return;
       }
       return;
     }
 
-    // ✅ Modals
     if (interaction.isModalSubmit()) {
       const i = interaction as ModalSubmitInteraction;
 
@@ -108,25 +90,13 @@ export async function handleInteraction(interaction: Interaction) {
         return;
       }
 
-      return;
+      if (i.customId.startsWith("wl:adjust_reason:")) {
+        await handleWhitelistAdjustReasonModal(i);
+        return;
+      }
     }
   } catch (err) {
-    console.error("Interaction error:", err);
-    log.error({ err }, "Interaction error");
-
-    try {
-      if (
-        (interaction as any).isRepliable?.() &&
-        !(interaction as any).replied &&
-        !(interaction as any).deferred
-      ) {
-        await (interaction as any).reply({
-          content: "⚠️ Erro interno ao processar a interação. Verifique os logs.",
-          ephemeral: true,
-        });
-      }
-    } catch {
-      // ignore
-    }
+    console.error(err);
+    log.error(err);
   }
 }
