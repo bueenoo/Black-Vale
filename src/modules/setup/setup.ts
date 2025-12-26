@@ -8,14 +8,17 @@ import {
   StringSelectMenuBuilder,
 } from "discord.js";
 
-import { prisma } from "../../prisma/client.js";
+import { prisma } from "../../core/prisma.js";
 
 /* ======================================================
    /setup — COMANDO PRINCIPAL
 ====================================================== */
-export async function setupCommand(
-  interaction: ChatInputCommandInteraction
-) {
+export async function setupCommand(interaction: ChatInputCommandInteraction) {
+  if (!interaction.inGuild() || !interaction.guildId) {
+    await interaction.reply({ ephemeral: true, content: "Use /setup dentro de um servidor." });
+    return;
+  }
+
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({ ephemeral: true });
   }
@@ -88,26 +91,26 @@ export async function setupPageButton(interaction: ButtonInteraction) {
 /* ======================================================
    SELECT MENU — DEFINIÇÃO DE VALORES
 ====================================================== */
-export async function setupValueSelect(
-  interaction: StringSelectMenuInteraction
-) {
+export async function setupValueSelect(interaction: StringSelectMenuInteraction) {
   await interaction.deferUpdate();
+
+  if (!interaction.inGuild() || !interaction.guildId) return;
 
   const value = interaction.values[0];
 
   await prisma.guildConfig.upsert({
-    where: { guildId: interaction.guildId! },
+    where: { guildId: interaction.guildId },
     create: {
-      guildId: interaction.guildId!,
+      guildId: interaction.guildId,
       [value]: interaction.channelId,
-    },
+    } as any,
     update: {
       [value]: interaction.channelId,
-    },
+    } as any,
   });
 
   await interaction.editReply({
-    content: `✅ Configuração **${value}** salva com sucesso.`,
+    content: `✅ Configuração **${value}** salva com sucesso (valor = este canal).`,
     components: [],
   });
 }
@@ -115,13 +118,11 @@ export async function setupValueSelect(
 /* ======================================================
    PUBLICAR PAINÉIS
 ====================================================== */
-export async function setupPublishButton(
-  interaction: ButtonInteraction
-) {
+export async function setupPublishButton(interaction: ButtonInteraction) {
   await interaction.deferUpdate();
 
   await interaction.editReply({
-    content: "🚀 Painéis publicados com sucesso.",
+    content: "🚀 Painéis publicados com sucesso. (Etapa de publicar será expandida depois.)",
     components: [],
   });
 }
