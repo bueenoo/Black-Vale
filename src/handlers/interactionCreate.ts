@@ -19,8 +19,13 @@ import {
 // tickets
 import { handleTicketButton } from "../modules/tickets/tickets.js";
 
-// whitelist
-import { whitelistStartButton } from "../modules/whitelist/handler.js";
+// whitelist (IMPORTA TUDO AGORA)
+import {
+  whitelistStartButton,
+  handleWhitelistAnswerModal,
+  handleWhitelistDecisionButton,
+  handleWhitelistRejectReasonModal,
+} from "../modules/whitelist/handler.js";
 
 function isSetupButton(id: string) {
   return id.startsWith("setup:") || id.startsWith("setup_page:") || id.startsWith("setup_publish:");
@@ -50,6 +55,12 @@ export async function handleInteraction(interaction: Interaction) {
       // ✅ whitelist start
       if (i.customId === "whitelist:start") {
         await whitelistStartButton(i);
+        return;
+      }
+
+      // ✅ whitelist staff decisions
+      if (i.customId.startsWith("wl:approve:") || i.customId.startsWith("wl:reject:")) {
+        await handleWhitelistDecisionButton(i);
         return;
       }
 
@@ -83,9 +94,20 @@ export async function handleInteraction(interaction: Interaction) {
       return;
     }
 
-    // Modals
+    // ✅ Modals
     if (interaction.isModalSubmit()) {
-      const _i = interaction as ModalSubmitInteraction;
+      const i = interaction as ModalSubmitInteraction;
+
+      if (i.customId.startsWith("whitelist:answer:")) {
+        await handleWhitelistAnswerModal(i);
+        return;
+      }
+
+      if (i.customId.startsWith("wl:reject_reason:")) {
+        await handleWhitelistRejectReasonModal(i);
+        return;
+      }
+
       return;
     }
   } catch (err) {
