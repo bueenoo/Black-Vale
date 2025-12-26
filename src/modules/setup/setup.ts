@@ -1,7 +1,7 @@
 import {
   ChatInputCommandInteraction,
   ButtonInteraction,
-  StringSelectMenuInteraction,
+  AnySelectMenuInteraction,
   ActionRowBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
@@ -105,7 +105,7 @@ function mainMenuRow() {
 
   menu.addOptions(CONFIG_ITEMS.map((x) => opt(x.label, x.key, x.desc)));
 
-  return new ActionRowBuilder().addComponents(menu);
+  return new ActionRowBuilder<any>().addComponents(menu);
 }
 
 function publishRow() {
@@ -114,7 +114,7 @@ function publishRow() {
     .setLabel("🚀 Publicar painéis")
     .setStyle(ButtonStyle.Success);
 
-  return new ActionRowBuilder().addComponents(btn);
+  return new ActionRowBuilder<any>().addComponents(btn);
 }
 
 function backRow() {
@@ -123,7 +123,7 @@ function backRow() {
     .setLabel("⬅️ Voltar")
     .setStyle(ButtonStyle.Secondary);
 
-  return new ActionRowBuilder().addComponents(btn);
+  return new ActionRowBuilder<any>().addComponents(btn);
 }
 
 // -----------------------------
@@ -138,7 +138,7 @@ async function saveConfig(guildId: string, key: ConfigItem, value: any) {
 }
 
 // -----------------------------
-// Exports (interactionCreate espera isso)
+// Exports
 // -----------------------------
 export async function setupCommand(interaction: ChatInputCommandInteraction) {
   await ensureRepliable(interaction);
@@ -157,7 +157,10 @@ export async function setupPageButton(interaction: ButtonInteraction) {
   await ensureRepliable(interaction);
 
   if (interaction.customId === "setup:home") {
-    const embed = new EmbedBuilder().setTitle("⚙️ Setup — Blackbot").setDescription("Selecione o item para configurar.");
+    const embed = new EmbedBuilder()
+      .setTitle("⚙️ Setup — Blackbot")
+      .setDescription("Selecione o item para configurar e depois publique os painéis.");
+
     await edit(interaction, { embeds: [embed], components: [mainMenuRow(), publishRow()] });
     return;
   }
@@ -165,10 +168,11 @@ export async function setupPageButton(interaction: ButtonInteraction) {
   await edit(interaction, { content: "⚠️ Botão desconhecido.", components: [mainMenuRow(), publishRow()] });
 }
 
-export async function setupValueSelect(interaction: StringSelectMenuInteraction) {
+// ✅ AGORA FUNCIONA para StringSelectMenu / ChannelSelectMenu / RoleSelectMenu
+export async function setupValueSelect(interaction: AnySelectMenuInteraction) {
   await ensureRepliable(interaction);
 
-  // Escolheu um item -> abre selector de valor (canal/cargo)
+  // Escolheu um item
   if (interaction.customId === "setup_select:item") {
     const key = interaction.values[0] as ConfigItem;
     const item = CONFIG_ITEMS.find((x) => x.key === key);
@@ -187,7 +191,8 @@ export async function setupValueSelect(interaction: StringSelectMenuInteraction)
 
       select.setChannelTypes(item.type === "category" ? ChannelType.GuildCategory : ChannelType.GuildText);
 
-      const row = new ActionRowBuilder().addComponents(select);
+      const row = new ActionRowBuilder<any>().addComponents(select);
+
       await edit(interaction, {
         content: `✅ Configure: **${item.label}**\n${item.desc}`,
         embeds: [],
@@ -203,7 +208,8 @@ export async function setupValueSelect(interaction: StringSelectMenuInteraction)
         .setMinValues(1)
         .setMaxValues(1);
 
-      const row = new ActionRowBuilder().addComponents(select);
+      const row = new ActionRowBuilder<any>().addComponents(select);
+
       await edit(interaction, {
         content: `✅ Configure: **${item.label}**\n${item.desc}`,
         embeds: [],
@@ -220,7 +226,7 @@ export async function setupValueSelect(interaction: StringSelectMenuInteraction)
     return;
   }
 
-  // Salvou um valor
+  // Salvou um valor (channel/role)
   if (interaction.customId.startsWith("setup_select:value:")) {
     const key = interaction.customId.split(":")[2] as ConfigItem;
     const guildId = interaction.guildId!;
