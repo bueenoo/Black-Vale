@@ -156,6 +156,11 @@ async function sendToStaff(guild: Guild, app: any) {
 
   if (!staffChannelId) return;
 
+  if (!staffChannelId) return;
+  if (!staffMessageId) {
+    // Se a decisão veio pelo botão, a mensagem está em interaction.message
+    // e já foi preenchida acima.
+  }
   const staffChannel = await guild.channels.fetch(staffChannelId).catch(() => null);
   if (!staffChannel || staffChannel.type !== ChannelType.GuildText) return;
 
@@ -416,25 +421,33 @@ async function applyDecisionAndUpdateCard(
   }
 
   // editar card da staff e desabilitar botões
-  const channelId = (interaction as any).customId?.includes(":") ? (interaction as any).customId.split(":")[3] : interaction.channelId;
   // no caso do modal, customId tem ...:<channelId>:<messageId>
   let staffChannelId = interaction.channelId;
   let staffMessageId: string | null = null;
 
   if ("customId" in interaction && interaction.customId.includes("wl:reject_reason:")) {
     const p = interaction.customId.split(":");
-    staffChannelId = p[3];
-    staffMessageId = p[4];
+    const chId = p[3];
+    if (chId) staffChannelId = chId;
+    const msgId = p[4];
+    if (msgId) staffMessageId = msgId;
   }
   if ("customId" in interaction && interaction.customId.includes("wl:adjust_note:")) {
     const p = interaction.customId.split(":");
-    staffChannelId = p[3];
-    staffMessageId = p[4];
+    const chId = p[3];
+    if (chId) staffChannelId = chId;
+    const msgId = p[4];
+    if (msgId) staffMessageId = msgId;
   }
   if ("message" in interaction && interaction.message?.id) {
     staffMessageId = staffMessageId ?? interaction.message.id;
   }
 
+  if (!staffChannelId) return;
+  if (!staffMessageId) {
+    // Se a decisão veio pelo botão, a mensagem está em interaction.message
+    // e já foi preenchida acima.
+  }
   const staffChannel = await guild.channels.fetch(staffChannelId).catch(() => null);
   if (staffChannel && staffChannel.type === ChannelType.GuildText && staffMessageId) {
     const msg = await (staffChannel as TextChannel).messages.fetch(staffMessageId).catch(() => null);
