@@ -9,7 +9,6 @@ import {
 import { RADIO_TYPES } from "./templates.js";
 import { RADIO_CHANNEL_ID, RADIO_PUBLISH_ROLE_ID } from "./handler.js";
 
-// ⬇️ NOVO: integra com o Ghost Radio (eventos, boletins, alertas)
 import {
   setRadioEvent,
   clearRadioEvent,
@@ -21,7 +20,6 @@ import {
 export const radioCommandData = new SlashCommandBuilder()
   .setName("radio")
   .setDescription("Rádio: transmissão padrão + eventos + alertas + boletins.")
-  // ===== ALERTA MANUAL =====
   .addSubcommand((s) =>
     s
       .setName("alert")
@@ -47,7 +45,6 @@ export const radioCommandData = new SlashCommandBuilder()
           .setRequired(true)
       )
   )
-  // ===== EVENTO ESPECIAL =====
   .addSubcommandGroup((g) =>
     g
       .setName("event")
@@ -86,7 +83,6 @@ export const radioCommandData = new SlashCommandBuilder()
         s.setName("off").setDescription("Desativa edição especial do rádio.")
       )
   )
-  // ===== QUADRO DE AVISOS =====
   .addSubcommandGroup((g) =>
     g
       .setName("bulletin")
@@ -151,7 +147,6 @@ export async function radioCommand(i: ChatInputCommandInteraction) {
   const sub = i.options.getSubcommand(false);
   const group = i.options.getSubcommandGroup(false);
 
-  // ========= /radio (sem args) → fluxo antigo (select do tipo) =========
   if (!sub && !group) {
     const select = new StringSelectMenuBuilder()
       .setCustomId("radio:type_select")
@@ -175,7 +170,6 @@ export async function radioCommand(i: ChatInputCommandInteraction) {
     return;
   }
 
-  // ========= /radio alert =========
   if (sub === "alert") {
     const severity = i.options.getString("severity", true) as "INFO" | "WARN" | "CRITICAL";
     const title = i.options.getString("title", true);
@@ -183,17 +177,12 @@ export async function radioCommand(i: ChatInputCommandInteraction) {
 
     await i.reply({ ephemeral: true, content: "📡 Enviando alerta no rádio..." });
 
-    await triggerManualBroadcast(i.client, i.guildId!, {
-      title,
-      body,
-      severity,
-    });
+    await triggerManualBroadcast(i.client, i.guildId!, { title, body, severity });
 
     await i.editReply("✅ Alerta enviado.");
     return;
   }
 
-  // ========= /radio event on/off =========
   if (group === "event") {
     if (sub === "on") {
       const title = i.options.getString("title", true);
@@ -225,7 +214,6 @@ export async function radioCommand(i: ChatInputCommandInteraction) {
     }
   }
 
-  // ========= /radio bulletin add/clear =========
   if (group === "bulletin") {
     if (sub === "add") {
       const kind = i.options.getString("kind", true) as "TRAFEGO" | "CLIMA" | "DESAPARECIDO" | "FACCAO";
@@ -247,6 +235,5 @@ export async function radioCommand(i: ChatInputCommandInteraction) {
     }
   }
 
-  // fallback
   await i.reply({ ephemeral: true, content: "⚠️ Subcomando não reconhecido." });
 }
