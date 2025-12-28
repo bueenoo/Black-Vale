@@ -25,11 +25,8 @@ import {
   handleWhitelistAnswerModal,
   handleWhitelistDecisionButton,
   handleWhitelistRejectReasonModal,
+  handleWhitelistAdjustNoteModal,
 } from "../modules/whitelist/handler.js";
-
-// radio
-import { radioCommand } from "../modules/radio/command.js";
-import { handleRadioTypeSelect, handleRadioSubmit } from "../modules/radio/handler.js";
 
 function isSetupButton(id: string) {
   return id.startsWith("setup:") || id.startsWith("setup_page:") || id.startsWith("setup_publish:");
@@ -49,66 +46,35 @@ export async function handleInteraction(interaction: Interaction) {
         return;
       }
 
-      if (i.commandName === "radio") {
-        await radioCommand(i);
-        return;
-      }
-
       return;
     }
 
     // Buttons
     if (interaction.isButton()) {
       const i = interaction as ButtonInteraction;
+      const id = i.customId;
+
+      // setup module buttons
+      if (isSetupButton(id)) {
+        if (id.startsWith("setup_page:")) return setupPageButton(i);
+        if (id.startsWith("setup_publish:")) return setupPublishButton(i);
+        return;
+      }
+
+      // select-like buttons (if you use it)
+      if (id.startsWith("setup_value_select:")) {
+        return setupValueSelect(i as any);
+      }
+
+      // tickets
+      if (id.startsWith("ticket:")) return handleTicketButton(i);
 
       // whitelist start
-      if (i.customId === "whitelist:start") {
-        await whitelistStartButton(i);
-        return;
-      }
+      if (id === "wl:start" || id.startsWith("wl:start")) return whitelistStartButton(i);
 
-      // whitelist: next step + staff decisions
-      if (
-        i.customId.startsWith("wl:next:") ||
-        i.customId.startsWith("wl:approve:") ||
-        i.customId.startsWith("wl:reject:")
-      ) {
-        await handleWhitelistDecisionButton(i);
-        return;
-      }
-
-      // setup buttons
-      if (isSetupButton(i.customId)) {
-        if (i.customId.startsWith("setup:") || i.customId.startsWith("setup_page:")) {
-          await setupPageButton(i);
-          return;
-        }
-        if (i.customId.startsWith("setup_publish:")) {
-          await setupPublishButton(i);
-          return;
-        }
-      }
-
-      // ticket buttons
-      if (i.customId.startsWith("ticket:")) {
-        await handleTicketButton(i);
-        return;
-      }
-
-      return;
-    }
-
-    // Select menus
-    if (interaction.isAnySelectMenu()) {
-      if (interaction.customId.startsWith("setup_select:")) {
-        await setupValueSelect(interaction);
-        return;
-      }
-
-      // radio select
-      if (interaction.isStringSelectMenu() && interaction.customId === "radio:type_select") {
-        await handleRadioTypeSelect(interaction);
-        return;
+      // staff decisions
+      if (id.startsWith("wl:approve:") || id.startsWith("wl:reject:") || id.startsWith("wl:adjust:")) {
+        return handleWhitelistDecisionButton(i);
       }
 
       return;
@@ -118,34 +84,18 @@ export async function handleInteraction(interaction: Interaction) {
     if (interaction.isModalSubmit()) {
       const i = interaction as ModalSubmitInteraction;
 
-      if (i.customId.startsWith("wl:answer:")) {
-        await handleWhitelistAnswerModal(i);
-        return;
-      }
-
-      if (i.customId.startsWith("wl:reject_reason:")) {
-        await handleWhitelistRejectReasonModal(i);
-        return;
-      }
-
-      // radio
-      if (i.customId.startsWith("radio:submit:")) {
-        await handleRadioSubmit(i);
-        return;
-      }
+      if (i.customId.startsWith("wl:answer:")) return handleWhitelistAnswerModal(i);
+      if (i.customId.startsWith("wl:reject_reason:")) return handleWhitelistRejectReasonModal(i);
+      if (i.customId.startsWith("wl:adjust_note:")) return handleWhitelistAdjustNoteModal(i);
 
       return;
     }
-  } catch (err) {
-    console.error("Interaction error:", err);
-    log.error({ err }, "Interaction error");
-
+  } catch (err: any) {
+    log.error({ err }, "interaction handler error");
     try {
-      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: "⚠️ Ocorreu um erro ao processar a interação.", ephemeral: true });
+      if (interaction.isRepliable()) {
+        await interaction.reply({ content: "❌ Erro interno. Tente novamente.", ephemeral: true });
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 }
