@@ -140,7 +140,7 @@ type EventState = {
   title?: string;
   until?: number; // ms timestamp
   cultBoost?: boolean;
-  extraFrequencyMinutes?: number; // se quiser “rádio mais ativa” no evento
+  extraFrequencyMinutes?: number; // minutos extra durante evento (opcional)
 };
 
 const EVENT_BY_GUILD = new Map<string, EventState>();
@@ -158,7 +158,6 @@ export function clearRadioEvent(guildId: string) {
 export function addRadioBulletin(guildId: string, b: { kind: BulletinKind; text: string }) {
   const arr = BULLETINS_BY_GUILD.get(guildId) ?? [];
   arr.unshift({ kind: b.kind, text: b.text, createdAt: Date.now() });
-  // limita pra não virar mural infinito
   BULLETINS_BY_GUILD.set(guildId, arr.slice(0, 20));
 }
 
@@ -167,12 +166,24 @@ export function clearRadioBulletins(guildId: string) {
 }
 
 /* Alerta manual (staff) */
-export async function triggerManualBroadcast(client: Client, guildId: string, payload: { title: string; body: string; severity?: "INFO" | "WARN" | "CRITICAL" }) {
+export async function triggerManualBroadcast(
+  client: Client,
+  guildId: string,
+  payload: { title: string; body: string; severity?: "INFO" | "WARN" | "CRITICAL" }
+) {
   const ch = await client.channels.fetch(RADIO_CHANNEL_ID).catch(() => null);
   if (!ch || ch.type !== ChannelType.GuildText) return;
 
   const sev = payload.severity ?? "WARN";
-  const status = "SINAL FORTE";
+
+  // ✅ FIX TS2322: usar apenas statuses que EXISTEM no union de templates.ts
+  const status =
+    sev === "CRITICAL"
+      ? "INTERFERÊNCIA"
+      : sev === "WARN"
+      ? "TRANSMISSÃO INSTÁVEL"
+      : "SINAL INTERMITENTE";
+
   const type: RadioType = sev === "CRITICAL" ? "AVISO" : "BOATO";
 
   const header =
@@ -225,7 +236,6 @@ function buildBulletinBlock(guildId: string) {
   const base = BULLETINS_DEFAULT;
   const pool = [...custom, ...base];
 
-  // pega 3 itens variados
   const picks: Bulletin[] = [];
   const kinds: BulletinKind[] = ["CLIMA", "TRAFEGO", "DESAPARECIDO", "FACCAO"];
 
@@ -234,7 +244,6 @@ function buildBulletinBlock(guildId: string) {
     if (options.length) picks.push(pick(options));
   }
 
-  // se tiver pouco, completa
   while (picks.length < 3 && pool.length) picks.push(pick(pool));
 
   const lines = picks.slice(0, 4).map(b => {
@@ -257,7 +266,6 @@ function shouldInjectCult(event: EventState | undefined) {
 
 function generateProgram(guildId: string, used: Set<string>) {
   const event = EVENT_BY_GUILD.get(guildId);
-  // expira evento automaticamente
   if (event?.active && event.until && Date.now() > event.until) {
     EVENT_BY_GUILD.set(guildId, { active: false });
   }
@@ -331,6 +339,7 @@ function generateProgram(guildId: string, used: Set<string>) {
       };
     }
   }
+
   return null;
 }
 
@@ -368,12 +377,10 @@ export function startGhostRadio(client: Client) {
     setInterval(() => sendScheduled().catch(() => null), GHOST_EVERY_HOURS * 60 * 60 * 1000);
   }, first);
 
-  // frequência extra durante evento (opcional)
+  // pulso extra durante evento (leve / sem spam)
   setInterval(() => {
-    const chGuilds = Array.from(EVENT_BY_GUILD.entries()).filter(([_, ev]) => ev.active && (ev.extraFrequencyMinutes ?? 0) > 0);
-    // se não tiver evento com extra, não faz nada
-    if (!chGuilds.length) return;
-    // envia “pulso” extra (sem spam)
+    const activeAny = Array.from(EVENT_BY_GUILD.values()).some((ev) => ev.active && (ev.extraFrequencyMinutes ?? 0) > 0);
+    if (!activeAny) return;
     sendScheduled().catch(() => null);
-  }, 30 * 60 * 1000); // checa a cada 30min (só transmite se tiver evento com extra)
+  }, 30 * 60 * 1000);
 }
