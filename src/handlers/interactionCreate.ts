@@ -54,10 +54,17 @@ function isWhitelistButtonId(id: string) {
     id === "whitelistStart" ||
     id.startsWith("wl:start") ||
     id.startsWith("whitelist:start") ||
+
+    // NEW staff actions (current code)
+    id.startsWith("wl:approve:") ||
+    id.startsWith("wl:reject:") ||
+
+    // Legacy staff actions (older versions)
     id.startsWith("wl:decision:") ||
     id.startsWith("whitelist:decision:")
   );
 }
+
 
 function isWhitelistModalId(id: string) {
   return (
@@ -104,15 +111,26 @@ export async function handleInteraction(interaction: Interaction) {
       // Ticket buttons
       if (id.startsWith("ticket:")) return await handleTicketButton(i);
 
-      // Whitelist buttons (start + decision)
+      // Whitelist buttons (start + staff decisions)
       if (isWhitelistButtonId(id)) {
-        // Start variants
-        if (id === "wl:start" || id === "whitelist:start" || id === "whitelistStart" || id.startsWith("wl:start") || id.startsWith("whitelist:start")) {
+        // Start variants (new + legacy)
+        if (
+          id === "wl:start" ||
+          id === "whitelist:start" ||
+          id === "whitelistStart" ||
+          id.startsWith("wl:start") ||
+          id.startsWith("whitelist:start")
+        ) {
           return await whitelistStartButton(i);
         }
 
-        // Decision variants
-        if (id.startsWith("wl:decision:") || id.startsWith("whitelist:decision:")) {
+        // Staff actions (new + legacy)
+        if (
+          id.startsWith("wl:approve:") ||
+          id.startsWith("wl:reject:") ||
+          id.startsWith("wl:decision:") ||
+          id.startsWith("whitelist:decision:")
+        ) {
           return await handleWhitelistDecisionButton(i);
         }
       }
@@ -162,7 +180,7 @@ export async function handleInteraction(interaction: Interaction) {
 
       log.info({ customId: id, user: i.user.id, guild: i.guildId }, "select interaction");
 
-      if (id.startsWith("setup_value:")) return await setupValueSelect(i);
+      if (id.startsWith("setup_value:") || id.startsWith("setup_select:")) return await setupValueSelect(i);
 
       if (!i.deferred && !i.replied) {
         await i.reply({ content: "⚠️ Seletor não reconhecido.", ephemeral: true });
