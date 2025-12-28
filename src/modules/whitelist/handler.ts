@@ -68,9 +68,6 @@ const QUESTIONS = [
   },
 ] as const;
 
-// Fallback fixo (se não houver config no banco). Você pediu aprovação nesse canal:
-const APPROVAL_CHANNEL_ID_FALLBACK = "1453867163612872824";
-
 function isSteamId64(v: string) {
   return /^\d{17}$/.test(v.trim());
 }
@@ -82,62 +79,6 @@ function questionEmbed(step: number) {
     .setDescription(
       `Responda **uma pergunta por vez**.\n\n**${q.title}**\n${q.text}`
     );
-}
-
-async function closeWhitelistThreadIfAny(message: Message) {
-  try {
-    const ch: any = message.channel;
-    if (ch?.isThread?.()) {
-      // trava e arquiva pra "fechar" a WL
-      await ch.setLocked(true, "Whitelist finalizada");
-      await ch.setArchived(true, "Whitelist finalizada");
-    }
-  } catch {
-    // ignore
-  }
-}
-
-function buildStaffEmbed(attempt: any) {
-  const answers = (attempt.answers ?? {}) as Record<string, string>;
-
-  const order: Array<[string, string]> = [
-    ["nome", "Nome"],
-    ["origem", "Origem"],
-    ["sobrevivencia", "Sobrevivência"],
-    ["confianca", "Confiança"],
-    ["limite", "Limite"],
-    ["medo", "Medo"],
-    ["steamId", "SteamID64"],
-  ];
-
-  const desc = order
-    .map(([k, label]) => {
-      const v = (answers[k] ?? "").toString().trim();
-      return `**${label}:**\n${v ? v : "(vazio)"}`;
-    })
-    .join("\n\n");
-
-  return new EmbedBuilder()
-    .setTitle("📜 Whitelist — Nova submissão")
-    .setDescription(desc)
-    .addFields(
-      { name: "Usuário", value: `<@${attempt.userId}> (${attempt.userTag})`, inline: false },
-      { name: "Tentativa", value: attempt.id, inline: true },
-      { name: "Status", value: attempt.status, inline: true }
-    );
-}
-
-function staffDecisionRow(attemptId: string) {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`wl:approve:${attemptId}`)
-      .setLabel("✅ Aprovar")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`wl:reject:${attemptId}`)
-      .setLabel("❌ Reprovar")
-      .setStyle(ButtonStyle.Danger)
-  );
 }
 
 /* ─────────────────────────────── */
@@ -270,33 +211,9 @@ export async function handleWhitelistThreadMessage(message: Message) {
       },
     });
 
-    // Envia para o canal de aprovação (staff)
-    try {
-      const cfg = await prisma.guildConfig.findUnique({
-        where: { guildId: message.guildId ?? "" },
-      });
-
-      const approvalChannelId =
-        (cfg as any)?.whitelistReviewChannelId ??
-        (cfg as any)?.whitelistChannelId ??
-        APPROVAL_CHANNEL_ID_FALLBACK;
-
-      const ch = await message.client.channels.fetch(approvalChannelId).catch(() => null);
-      if (ch && ch.isTextBased()) {
-        await ch.send({
-          content: `🧾 Nova whitelist recebida: <@${attempt.userId}>`,
-          embeds: [buildStaffEmbed({ ...attempt, answers, status: "SUBMITTED", steamId: content })],
-          components: [staffDecisionRow(attempt.id)],
-        });
-      }
-    } catch {
-      // ignore
-    }
-
-    await (message.channel as any).send("✅ **Whitelist finalizada!** Aguarde análise.");
-
-    // Fecha a thread/tópico (arquiva + bloqueia)
-    await closeWhitelistThreadIfAny(message);
+    await (message.channel as any).send(
+      "✅ **Whitelist finalizada!** Aguarde análise."
+    );
     return;
   }
 
@@ -324,142 +241,13 @@ export async function handleWhitelistAnswerModal(
 }
 
 export async function handleWhitelistDecisionButton(i: ButtonInteraction) {
-  if (!i.guild) {
-    await i.reply({ content: "⚠️ Isso só funciona dentro do servidor.", ephemeral: true });
-    return;
-  }
-
-  const parts = i.customId.split(":");
-  // esperado: wl:approve:<attemptId> | wl:reject:<attemptId>
-  const action = parts[1];
-  const attemptId = parts[2];
-
-  if (!action || !attemptId) {
-    await i.reply({ content: "⚠️ Ação inválida.", ephemeral: true });
-    return;
-  }
-
-  const cfg = await prisma.guildConfig.findUnique({ where: { guildId: i.guild.id } });
-  const staffRoleId = (cfg as any)?.staffRoleId as string | undefined;
-
-  // exige cargo staff se estiver configurado; senão exige permissão de gerenciar servidor
-  const member = await i.guild.members.fetch(i.user.id).catch(() => null);
-  const isStaff = staffRoleId ? member?.roles?.cache?.has(staffRoleId) : false;
-  const hasManageGuild = member?.permissions?.has(PermissionsBitField.Flags.ManageGuild);
-  if (staffRoleId && !isStaff && !hasManageGuild) {
-    await i.reply({ content: "⛔ Você não tem permissão para avaliar whitelist.", ephemeral: true });
-    return;
-  }
-
-  const attempt = await prisma.whitelistApplication.findUnique({ where: { id: attemptId } });
-  if (!attempt) {
-    await i.reply({ content: "⚠️ Whitelist não encontrada.", ephemeral: true });
-    return;
-  }
-
-  if (attempt.status !== "SUBMITTED") {
-    await i.reply({ content: "⚠️ Essa whitelist já foi avaliada ou não está submetida.", ephemeral: true });
-    return;
-  }
-
-  if (action === "reject") {
-    const modal = new ModalBuilder()
-      .setCustomId(`wl:reject_reason:${attemptId}`)
-      .setTitle("Motivo da reprovação");
-
-    const reason = new TextInputBuilder()
-      .setCustomId("reason")
-      .setLabel("Explique o motivo")
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-      .setMaxLength(800);
-
-    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(reason));
-    await i.showModal(modal);
-    return;
-  }
-
-  // APPROVE
-  await prisma.whitelistApplication.update({
-    where: { id: attemptId },
-    data: {
-      status: "APPROVED",
-    },
-  });
-
-  // tenta dar cargo aprovado (se existir na config)
-  try {
-    const approvedRoleId =
-      (cfg as any)?.whitelistApprovedRoleId ?? (cfg as any)?.whitelistRoleId ?? null;
-    if (approvedRoleId) {
-      const m = await i.guild.members.fetch(attempt.userId).catch(() => null);
-      if (m) await m.roles.add(approvedRoleId, "Whitelist aprovada");
-    }
-  } catch {
-    // ignore
-  }
-
-  // avisa usuário via DM
-  try {
-    const user = await i.client.users.fetch(attempt.userId);
-    await user.send("✅ Sua whitelist foi **APROVADA**. Bem-vindo ao Black | Vale dos Ossos.");
-  } catch {
-    // ignore
-  }
-
-  // atualiza a mensagem do staff (desliga botões)
-  try {
-    const embed = buildStaffEmbed({ ...attempt, status: "APPROVED" });
-    await i.update({
-      content: `✅ Whitelist aprovada por <@${i.user.id}>`,
-      embeds: [embed],
-      components: [],
-    });
-  } catch {
-    if (!i.replied) await i.reply({ content: "✅ Aprovado.", ephemeral: true });
-  }
+  await i.reply({ content: "⚠️ Staff flow não alterado.", ephemeral: true });
 }
 
 export async function handleWhitelistRejectReasonModal(
   i: ModalSubmitInteraction
 ) {
-  if (!i.guild) {
-    await i.reply({ content: "⚠️ Isso só funciona dentro do servidor.", ephemeral: true });
-    return;
-  }
-
-  // esperado: wl:reject_reason:<attemptId>
-  const parts = i.customId.split(":");
-  const attemptId = parts[2];
-  const reason = i.fields.getTextInputValue("reason")?.trim() || "(sem motivo)";
-
-  const attempt = await prisma.whitelistApplication.findUnique({ where: { id: attemptId } });
-  if (!attempt) {
-    await i.reply({ content: "⚠️ Whitelist não encontrada.", ephemeral: true });
-    return;
-  }
-
-  if (attempt.status !== "SUBMITTED") {
-    await i.reply({ content: "⚠️ Essa whitelist já foi avaliada ou não está submetida.", ephemeral: true });
-    return;
-  }
-
-  await prisma.whitelistApplication.update({
-    where: { id: attemptId },
-    data: {
-      status: "REJECTED",
-    },
-  });
-
-  // avisa usuário via DM
-  try {
-    const user = await i.client.users.fetch(attempt.userId);
-    await user.send(`❌ Sua whitelist foi **REPROVADA**. Motivo: ${reason}`);
-  } catch {
-    // ignore
-  }
-
-  await i.reply({ content: "❌ Reprovado e notificado (DM se disponível).", ephemeral: true });
+  await i.reply({ content: "⚠️ Staff flow não alterado.", ephemeral: true });
 }
 
 export async function handleWhitelistAdjustNoteModal(
