@@ -1,10 +1,13 @@
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, Partials } from "discord.js";
 import { loadEnv } from "./core/env.js";
 import { prisma } from "./core/prisma.js";
 import { registerCommands } from "./slash/register.js";
 import { handleInteraction } from "./handlers/interactionCreate.js";
 import { createLogger } from "./core/logger.js";
 import { ensureGuildConfig } from "./core/seed.js";
+
+// ✅ ADD: messageCreate handler
+import { handleMessageCreate } from "./handlers/messageCreate.js";
 
 // radio ghosts
 import { startGhostRadio } from "./modules/radio/ghost.js";
@@ -25,7 +28,13 @@ async function main() {
       GatewayIntentBits.GuildMembers,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
+
+      // ✅ ADD: necessário para receber mensagens em DM (fallback da WL)
+      GatewayIntentBits.DirectMessages,
     ],
+
+    // ✅ ADD: necessário para DM funcionar (canal vem como partial)
+    partials: [Partials.Channel],
   });
 
   // ✅ expõe o client globalmente (compatível com o setup.ts)
@@ -54,6 +63,9 @@ async function main() {
   });
 
   client.on("interactionCreate", handleInteraction);
+
+  // ✅ ADD: isso faz as perguntas avançarem (thread privada + DM)
+  client.on("messageCreate", handleMessageCreate);
 
   await client.login(env.DISCORD_TOKEN);
 }
