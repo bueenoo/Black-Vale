@@ -188,52 +188,89 @@ async function lockThread(thread: any, reason: string) {
  * - cria thread e começa perguntas
  */
 export async function whitelistStartButton(interaction: ButtonInteraction) {
-  await interaction.deferReply({ ephemeral: true });
-
-  const guild = interaction.guild;
-  if (!guild) return;
-
-  const userId = interaction.user.id;
-  const userTag = safeUsernameTag(interaction.user);
-
-  // cria nova tentativa (e expira ativa)
-  const app = await createNewApp(guild, userId, userTag);
-
-  // canal base
-  const ch = interaction.channel;
-  if (!ch || ch.type !== ChannelType.GuildText) {
-    return interaction.editReply("❌ Use este botão em um canal de texto do servidor.");
+  // ACK imediato: evita "Esta interação falhou"
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ ephemeral: true });
   }
 
-  // precisa criar thread
-  const me = guild.members.me;
-  if (me) {
-    const perms = ch.permissionsFor(me);
-    if (!perms?.has(PermissionFlagsBits.CreatePublicThreads) || !perms.has(PermissionFlagsBits.SendMessagesInThreads)) {
-      return interaction.editReply("❌ Preciso das permissões **Create Public Threads** e **Send Messages in Threads** neste canal.");
+  try {
+    const guild = interaction.guild;
+    if (!guild) {
+      await interaction.editReply("❌ Isso só funciona dentro de um servidor.");
+      return;
     }
+
+    const userId = interaction.user.id;
+    const userTag = safeUsernameTag(interaction.user);
+
+    // canal base
+    const ch = interaction.channel;
+    if (!ch || ch.type !== ChannelType.GuildText) {
+      await interaction.editReply("❌ O botão precisa estar em um **canal de texto** (não fórum/thread/DM).");
+      return;
+    }
+
+    // permissões necessárias
+    const me = guild.members.me;
+    const missing: string[] = [];
+    if (me) {
+      const perms = ch.permissionsFor(me);
+      const needs: Array<[string, bigint]> = [
+        ["ViewChannel", PermissionFlagsBits.ViewChannel],
+        ["SendMessages", PermissionFlagsBits.SendMessages],
+        ["CreatePublicThreads", PermissionFlagsBits.CreatePublicThreads],
+        ["SendMessagesInThreads", PermissionFlagsBits.SendMessagesInThreads],
+      ];
+      for (const [name, flag] of needs) {
+        if (!perms?.has(flag)) missing.push(name);
+      }
+      // recomendado (não obrigatório)
+      if (!perms?.has(PermissionFlagsBits.ManageThreads)) {
+        // não adiciona em missing fatal; só avisa depois se quiser
+      }
+    }
+
+    if (missing.length) {
+      await interaction.editReply(
+        "❌ Não consigo iniciar a whitelist porque faltam permissões do bot neste canal:\n" +
+          "```" +
+          missing.join(", ") +
+          "```\n" +
+          "➡️ Libere essas permissões no canal onde está o botão.",
+      );
+      return;
+    }
+
+    // cria nova tentativa (e expira ativa)
+    const app = await createNewApp(guild, userId, userTag);
+
+    // cria thread
+    const thread = await (ch as TextChannel).threads.create({
+      name: `wl-${interaction.user.username}-${app.id.slice(0, 6)}`,
+      autoArchiveDuration: 1440,
+      reason: "Whitelist contínua",
+    });
+
+    await thread.members.add(userId).catch(() => null);
+
+    // salva thread no meta (sem mudar schema)
+    const answers = (app.answers ?? {}) as any;
+    answers._meta = { ...(answers._meta ?? {}), threadId: thread.id, threadChannelId: thread.id };
+    await prisma.whitelistApplication.update({ where: { id: app.id }, data: { answers } });
+
+    await interaction.editReply(`✅ Whitelist iniciada em: <#${thread.id}>`);
+
+    await thread.send(
+      "🧾 **Whitelist — Vale dos Ossos**\n" +
+        "Responda **uma pergunta por vez**. Se errar, você pode clicar em **Iniciar Whitelist** novamente.\n\n" +
+        `**Pergunta 1/${QUESTIONS.length}**\n${QUESTIONS[0].text}`,
+    );
+  } catch (err: any) {
+    await interaction.editReply(
+      "❌ Falha ao iniciar whitelist.\n" +
+        `Motivo: \`${err?.message ?? String(err)}\``,
+    );
   }
-
-  const thread = await (ch as TextChannel).threads.create({
-    name: `wl-${interaction.user.username}-${app.id.slice(0, 6)}`,
-    autoArchiveDuration: 1440,
-    reason: "Whitelist contínua",
-  });
-
-  await thread.members.add(userId).catch(() => null);
-
-  // salva thread no meta (sem mudar schema)
-  const answers = (app.answers ?? {}) as any;
-  answers._meta = { ...(answers._meta ?? {}), threadId: thread.id, threadChannelId: thread.id };
-  await prisma.whitelistApplication.update({ where: { id: app.id }, data: { answers } });
-
-  await interaction.editReply(`✅ Whitelist iniciada em: <#${thread.id}>`);
-
-  await thread.send(
-    "🧾 **Whitelist — Vale dos Ossos**\n" +
-      "Responda **uma pergunta por vez**. Se errar, você pode clicar em **Iniciar Whitelist** novamente.\n\n" +
-      `**Pergunta 1/${QUESTIONS.length}**\n${QUESTIONS[0].text}`,
-  );
 }
 
 /**
