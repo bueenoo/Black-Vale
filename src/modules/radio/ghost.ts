@@ -12,6 +12,9 @@ import { breakIntoRadioLines } from "./utils.js";
    - Comerciais imersivos
    - Mensagens raras do Culto (Faith’s Gate)
    - Alertas manuais pela staff (via command.ts -> triggerManualBroadcast)
+   - CLIMA/TREFEGO automáticos (procedural "IA local") em horários fixos
+     * CLIMA: 09:00 / 13:00 / 20:00
+     * TRÁFEGO: 09:00 / 12:00 / 18:00 / 21:00
 ========================================================= */
 
 const GHOST_ENABLED = true;
@@ -108,14 +111,92 @@ const COMMERCIALS = [
 
 /* ===================== QUADRO DE AVISOS ===================== */
 type BulletinKind = "TRAFEGO" | "CLIMA" | "DESAPARECIDO" | "FACCAO";
-type Bulletin = { kind: BulletinKind; text: string; createdAt: number };
+type BulletinSource = "AUTO" | "STAFF";
+
+type Bulletin = {
+  kind: BulletinKind;
+  text: string;
+  createdAt: number;
+  source: BulletinSource;
+  expiresAt?: number; // só AUTO usa
+};
 
 const BULLETINS_DEFAULT: Bulletin[] = [
-  { kind: "CLIMA", text: "neblina baixa prevista. se o som sumir, não force caminho.", createdAt: 0 },
-  { kind: "TRAFEGO", text: "movimento estranho na rota entre **Tyler** e **Lakeland**. vá por dentro.", createdAt: 0 },
-  { kind: "DESAPARECIDO", text: "procura-se: ‘homem de jaqueta verde’. última vez visto em **Milton**.", createdAt: 0 },
-  { kind: "FACCAO", text: "recado curto: ‘não acampe perto do **Quarry**’ — assinado: ninguém.", createdAt: 0 },
+  { kind: "CLIMA", text: "neblina baixa prevista. se o som sumir, não force caminho.", createdAt: 0, source: "AUTO" },
+  { kind: "TRAFEGO", text: "movimento estranho na rota entre **Tyler** e **Lakeland**. vá por dentro.", createdAt: 0, source: "AUTO" },
+  { kind: "DESAPARECIDO", text: "procura-se: ‘homem de jaqueta verde’. última vez visto em **Milton**.", createdAt: 0, source: "AUTO" },
+  { kind: "FACCAO", text: "recado curto: ‘não acampe perto do **Quarry**’ — assinado: ninguém.", createdAt: 0, source: "AUTO" },
 ];
+
+/* ===================== “IA LOCAL” — CLIMA/TRÁFEGO ===================== */
+const WEATHER_PHRASES = [
+  "neblina densa reduzindo a visão",
+  "céu fechado e vento cortante",
+  "chuva fina constante",
+  "frio seco que endurece os dedos",
+  "tempo limpo demais — desconfie",
+];
+
+const WEATHER_HINTS = [
+  "evite campo aberto",
+  "reduza fogueiras",
+  "se a estática subir, fique em silêncio",
+  "não confie em luzes distantes",
+];
+
+const TRAFFIC_THEMES = [
+  "barreira improvisada",
+  "movimento armado suspeito",
+  "carcaça bloqueando pista",
+  "tiros espaçados como aviso",
+  "sinalizador ao longe",
+];
+
+const ROUTES = [
+  ["Tyler","Lakeland"],
+  ["Juno","Hawkins"],
+  ["Milton","Ouray"],
+  ["Checkpoint West","Fort Hale"],
+];
+
+function makeAutoWeatherLine() {
+  return `🌫️ clima: ${pick(WEATHER_PHRASES)}. ${pick(WEATHER_HINTS)}.`;
+}
+
+function makeAutoTrafficLine() {
+  const [a, b] = pick(ROUTES);
+  // adiciona sugestão de lugar alternativo/evitar
+  const avoid = pick(LOCATIONS);
+  const alt = pick(LOCATIONS);
+  return `🚧 tráfego: rota **${a} → ${b}** com ${pick(TRAFFIC_THEMES)}. evitar **${avoid}**. alternativa: **${alt}**.`;
+}
+
+function pruneExpiredBulletins(guildId: string) {
+  const arr = BULLETINS_BY_GUILD.get(guildId) ?? [];
+  const now = Date.now();
+  BULLETINS_BY_GUILD.set(
+    guildId,
+    arr.filter((b) => !b.expiresAt || b.expiresAt > now)
+  );
+}
+
+function upsertAutoBulletin(guildId: string, kind: BulletinKind, text: string, ttlMinutes: number) {
+  const arr = BULLETINS_BY_GUILD.get(guildId) ?? [];
+  const now = Date.now();
+  const expiresAt = now + ttlMinutes * 60 * 1000;
+
+  const filtered = arr.filter((b) => !(b.source === "AUTO" && b.kind === kind));
+  filtered.unshift({ kind, text, createdAt: now, source: "AUTO", expiresAt });
+  BULLETINS_BY_GUILD.set(guildId, filtered.slice(0, 25));
+}
+
+function autoBulletinTick(guildId: string, mode: "WEATHER" | "TRAFFIC") {
+  if (mode === "WEATHER") {
+    upsertAutoBulletin(guildId, "CLIMA", makeAutoWeatherLine(), 10 * 60); // 10h
+    return;
+  }
+  upsertAutoBulletin(guildId, "TRAFEGO", makeAutoTrafficLine(), 6 * 60); // 6h
+}
 
 /* ===================== RARIDADE ===================== */
 type Rarity = "COMMON" | "UNCOMMON" | "RARE" | "LEGEND";
@@ -157,12 +238,14 @@ export function clearRadioEvent(guildId: string) {
 
 export function addRadioBulletin(guildId: string, b: { kind: BulletinKind; text: string }) {
   const arr = BULLETINS_BY_GUILD.get(guildId) ?? [];
-  arr.unshift({ kind: b.kind, text: b.text, createdAt: Date.now() });
-  BULLETINS_BY_GUILD.set(guildId, arr.slice(0, 20));
+  arr.unshift({ kind: b.kind, text: b.text, createdAt: Date.now(), source: "STAFF" });
+  BULLETINS_BY_GUILD.set(guildId, arr.slice(0, 25));
 }
 
 export function clearRadioBulletins(guildId: string) {
-  BULLETINS_BY_GUILD.set(guildId, []);
+  // limpa apenas os da staff (mantém AUTO)
+  const arr = BULLETINS_BY_GUILD.get(guildId) ?? [];
+  BULLETINS_BY_GUILD.set(guildId, arr.filter((b) => b.source === "AUTO"));
 }
 
 /* Alerta manual (staff) */
@@ -232,6 +315,8 @@ function msUntilNextBlock(hours: number) {
 
 /* ===================== GERADOR “PROGRAMA” ===================== */
 function buildBulletinBlock(guildId: string) {
+  pruneExpiredBulletins(guildId);
+
   const custom = BULLETINS_BY_GUILD.get(guildId) ?? [];
   const base = BULLETINS_DEFAULT;
   const pool = [...custom, ...base];
@@ -252,7 +337,7 @@ function buildBulletinBlock(guildId: string) {
       b.kind === "TRAFEGO" ? "🚧 tráfego" :
       b.kind === "DESAPARECIDO" ? "🧷 desaparecidos" :
       "🕸️ facções";
-    return `${tag}: ${b.text}`;
+    return `${tag}: ${b.text}${b.source === "STAFF" ? " *(staff)*" : ""}`;
   });
 
   return lines.join("\n");
@@ -343,6 +428,22 @@ function generateProgram(guildId: string, used: Set<string>) {
   return null;
 }
 
+/* ===================== SCHEDULER (horários fixos) ===================== */
+function msUntilNextAt(hour: number) {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(hour, 0, 10, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next.getTime() - now.getTime();
+}
+
+function scheduleDaily(hour: number, fn: () => void) {
+  setTimeout(() => {
+    fn();
+    setInterval(fn, 24 * 60 * 60 * 1000);
+  }, msUntilNextAt(hour));
+}
+
 /* ===================== START ===================== */
 export function startGhostRadio(client: Client) {
   if (!GHOST_ENABLED) return;
@@ -369,7 +470,7 @@ export function startGhostRadio(client: Client) {
     if (AUTO_DELETE) setTimeout(() => msg.delete().catch(() => null), AUTO_DELETE_MINUTES * 60 * 1000);
   };
 
-  // 4/4h alinhado
+  // 4/4h alinhado (programa completo)
   const first = msUntilNextBlock(GHOST_EVERY_HOURS);
 
   setTimeout(async () => {
@@ -383,4 +484,22 @@ export function startGhostRadio(client: Client) {
     if (!activeAny) return;
     sendScheduled().catch(() => null);
   }, 30 * 60 * 1000);
+
+  // ✅ Agendamentos automáticos (CLIMA/TRÁFEGO procedural)
+  (async () => {
+    const ch = await client.channels.fetch(RADIO_CHANNEL_ID).catch(() => null);
+    if (!ch || ch.type !== ChannelType.GuildText) return;
+    const gid = (ch as TextChannel).guildId;
+
+    // CLIMA: 09 / 13 / 20
+    scheduleDaily(9,  () => autoBulletinTick(gid, "WEATHER"));
+    scheduleDaily(13, () => autoBulletinTick(gid, "WEATHER"));
+    scheduleDaily(20, () => autoBulletinTick(gid, "WEATHER"));
+
+    // TRÁFEGO: 09 / 12 / 18 / 21
+    scheduleDaily(9,  () => autoBulletinTick(gid, "TRAFFIC"));
+    scheduleDaily(12, () => autoBulletinTick(gid, "TRAFFIC"));
+    scheduleDaily(18, () => autoBulletinTick(gid, "TRAFFIC"));
+    scheduleDaily(21, () => autoBulletinTick(gid, "TRAFFIC"));
+  })().catch(() => null);
 }
