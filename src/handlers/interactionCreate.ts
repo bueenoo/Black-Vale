@@ -3,6 +3,7 @@ import {
   ChatInputCommandInteraction,
   ButtonInteraction,
   ModalSubmitInteraction,
+  InteractionType,
 } from "discord.js";
 
 import { createLogger } from "../core/logger.js";
@@ -28,8 +29,45 @@ import {
   handleWhitelistAdjustNoteModal,
 } from "../modules/whitelist/handler.js";
 
+/**
+ * IMPORTANT
+ * This handler is intentionally defensive:
+ * - It logs every component customId (buttons/modals/selects)
+ * - It ACKs unknown components so the user doesn't see "Esta interação falhou"
+ * - It routes multiple legacy/customId variants so old published buttons still work
+ */
+
 function isSetupButton(id: string) {
-  return id.startsWith("setup:") || id.startsWith("setup_page:") || id.startsWith("setup_publish:");
+  return (
+    id.startsWith("setup:") ||
+    id.startsWith("setup_page:") ||
+    id.startsWith("setup_publish:") ||
+    id.startsWith("setup_value:")
+  );
+}
+
+function isWhitelistButtonId(id: string) {
+  // Accept NEW + legacy ids (old panels won't be republished sometimes)
+  return (
+    id === "wl:start" ||
+    id === "whitelist:start" ||
+    id === "whitelistStart" ||
+    id.startsWith("wl:start") ||
+    id.startsWith("whitelist:start") ||
+    id.startsWith("wl:decision:") ||
+    id.startsWith("whitelist:decision:")
+  );
+}
+
+function isWhitelistModalId(id: string) {
+  return (
+    id.startsWith("wl:answer:") ||
+    id.startsWith("wl:reject_reason:") ||
+    id.startsWith("wl:adjust_note:") ||
+    id.startsWith("whitelist:answer:") ||
+    id.startsWith("whitelist:reject_reason:") ||
+    id.startsWith("whitelist:adjust_note:")
+  );
 }
 
 export async function handleInteraction(interaction: Interaction) {
@@ -41,11 +79,9 @@ export async function handleInteraction(interaction: Interaction) {
     if (interaction.isChatInputCommand()) {
       const i = interaction as ChatInputCommandInteraction;
 
-      if (i.commandName === "setup") {
-        await setupCommand(i);
-        return;
-      }
+      if (i.commandName === "setup") return await setupCommand(i);
 
+      // other commands...
       return;
     }
 
@@ -54,48 +90,103 @@ export async function handleInteraction(interaction: Interaction) {
       const i = interaction as ButtonInteraction;
       const id = i.customId;
 
-      // setup module buttons
+      log.info({ customId: id, user: i.user.id, guild: i.guildId }, "button interaction");
+
+      // Setup buttons
       if (isSetupButton(id)) {
-        if (id.startsWith("setup_page:")) return setupPageButton(i);
-        if (id.startsWith("setup_publish:")) return setupPublishButton(i);
+        if (id.startsWith("setup_page:")) return await setupPageButton(i);
+        if (id.startsWith("setup_publish:")) return await setupPublishButton(i);
+        if (id.startsWith("setup_value:")) return await setupValueSelect(i as any);
+        // fallback
         return;
       }
 
-      // select-like buttons (if you use it)
-      if (id.startsWith("setup_value_select:")) {
-        return setupValueSelect(i as any);
+      // Ticket buttons
+      if (id.startsWith("ticket:")) return await handleTicketButton(i);
+
+      // Whitelist buttons (start + decision)
+      if (isWhitelistButtonId(id)) {
+        // Start variants
+        if (id === "wl:start" || id === "whitelist:start" || id === "whitelistStart" || id.startsWith("wl:start") || id.startsWith("whitelist:start")) {
+          return await whitelistStartButton(i);
+        }
+
+        // Decision variants
+        if (id.startsWith("wl:decision:") || id.startsWith("whitelist:decision:")) {
+          return await handleWhitelistDecisionButton(i);
+        }
       }
 
-      // tickets
-      if (id.startsWith("ticket:")) return handleTicketButton(i);
-
-      // whitelist start
-      if (id === "wl:start" || id.startsWith("wl:start")) return whitelistStartButton(i);
-
-      // staff decisions
-      if (id.startsWith("wl:approve:") || id.startsWith("wl:reject:") || id.startsWith("wl:adjust:")) {
-        return handleWhitelistDecisionButton(i);
+      // If nothing matched, ACK the button so the user doesn't see "Esta interação falhou"
+      if (!i.deferred && !i.replied) {
+        await i.reply({
+          content:
+            "⚠️ Botão não reconhecido por este bot.\n" +
+            "Isso normalmente acontece quando o painel foi publicado por uma versão antiga.\n" +
+            "➡️ Peça para a staff rodar **/setup** e **Publish** novamente.",
+          ephemeral: true,
+        });
       }
-
       return;
     }
 
     // Modals
     if (interaction.isModalSubmit()) {
       const i = interaction as ModalSubmitInteraction;
+      const id = i.customId;
 
-      if (i.customId.startsWith("wl:answer:")) return handleWhitelistAnswerModal(i);
-      if (i.customId.startsWith("wl:reject_reason:")) return handleWhitelistRejectReasonModal(i);
-      if (i.customId.startsWith("wl:adjust_note:")) return handleWhitelistAdjustNoteModal(i);
+      log.info({ customId: id, user: i.user.id, guild: i.guildId }, "modal interaction");
 
+      if (isWhitelistModalId(id)) {
+        if (id.startsWith("wl:answer:") || id.startsWith("whitelist:answer:")) return await handleWhitelistAnswerModal(i);
+        if (id.startsWith("wl:reject_reason:") || id.startsWith("whitelist:reject_reason:")) return await handleWhitelistRejectReasonModal(i);
+        if (id.startsWith("wl:adjust_note:") || id.startsWith("whitelist:adjust_note:")) return await handleWhitelistAdjustNoteModal(i);
+      }
+
+      // Unknown modal: ACK
+      if (!i.deferred && !i.replied) {
+        await i.reply({
+          content:
+            "⚠️ Este formulário não está mais ativo (provavelmente de um painel antigo).\n" +
+            "➡️ Peça para a staff republicar o painel via **/setup**.",
+          ephemeral: true,
+        });
+      }
       return;
     }
+
+    // Select menus (if you use them in setup)
+    if ((interaction as any).isStringSelectMenu?.()) {
+      const i = interaction as any;
+      const id = i.customId as string;
+
+      log.info({ customId: id, user: i.user.id, guild: i.guildId }, "select interaction");
+
+      if (id.startsWith("setup_value:")) return await setupValueSelect(i);
+
+      if (!i.deferred && !i.replied) {
+        await i.reply({ content: "⚠️ Seletor não reconhecido.", ephemeral: true });
+      }
+      return;
+    }
+
+    // Other interaction types: do nothing
+    if (interaction.type === InteractionType.ApplicationCommandAutocomplete) return;
   } catch (err: any) {
-    log.error({ err }, "interaction handler error");
+    // Always try to ACK so user doesn't see "interaction failed"
     try {
-      if (interaction.isRepliable()) {
-        await interaction.reply({ content: "❌ Erro interno. Tente novamente.", ephemeral: true });
+      if ((interaction as any).isRepliable?.()) {
+        const i = interaction as any;
+        if (!i.deferred && !i.replied) {
+          await i.reply({
+            content: "❌ Erro ao processar interação: `" + (err?.message ?? String(err)) + "`",
+            ephemeral: true,
+          });
+        } else if (i.deferred && !i.replied) {
+          await i.editReply("❌ Erro ao processar interação: `" + (err?.message ?? String(err)) + "`");
+        }
       }
     } catch {}
+    log.error({ err }, "handleInteraction failed");
   }
 }
