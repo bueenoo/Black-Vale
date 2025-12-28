@@ -96,6 +96,49 @@ const QUESTIONS = [
   },
 ] satisfies Question[];
 
+
+/* =========================
+   STAFF HELPERS
+========================= */
+
+function buildDecisionRow(appId: string, disabled = false) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`wl:approve:${appId}`)
+      .setLabel("✅ Aprovar")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`wl:reject:${appId}`)
+      .setLabel("❌ Reprovar")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`wl:adjust:${appId}`)
+      .setLabel("✍️ Ajuste")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled)
+  );
+}
+
+async function disableStaffDecisionComponents(interaction: ButtonInteraction) {
+  const [, , appId] = interaction.customId.split(":");
+  if (!interaction.message) return;
+  await interaction.message.edit({ components: [buildDecisionRow(appId, true)] }).catch(() => null);
+}
+
+async function markStaffDecision(interaction: ButtonInteraction, statusLabel: string, staffTag: string) {
+  const [, , appId] = interaction.customId.split(":");
+  const embeds = interaction.message.embeds?.map((e) => EmbedBuilder.from(e)) ?? [];
+
+  if (embeds[0]) {
+    const now = new Date().toLocaleString("pt-BR");
+    embeds[0].setFooter({ text: `${statusLabel} • ${staffTag} • ${now}` });
+  }
+
+  await interaction.message.edit({ embeds, components: [buildDecisionRow(appId, true)] }).catch(() => null);
+}
+
 /* =========================
    START WHITELIST
 ========================= */
@@ -244,24 +287,83 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
     return;
   }
 
-  // DECISIONS
-  await interaction.deferReply({ ephemeral: true });
-
   const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
 
-  const member = await guild.members.fetch(interaction.user.id);
+  // Permissão de staff
+  const member = await guild.members.fetch(interaction.user.id).catch(() => null);
   const isStaff =
-    member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-    (cfg?.staffRoleId && member.roles.cache.has(cfg.staffRoleId));
+    !!member &&
+    (member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+      (cfg?.staffRoleId && member.roles.cache.has(cfg.staffRoleId)));
 
   if (!isStaff) {
-    await interaction.editReply("⛔ Apenas staff pode decidir.");
+    await interaction.reply({ content: "⛔ Apenas staff pode decidir.", ephemeral: true }).catch(async () => {
+      // fallback se já tiver respondido
+      try {
+        await interaction.editReply("⛔ Apenas staff pode decidir.");
+      } catch {}
+    });
     return;
   }
 
   const [, action, appId] = interaction.customId.split(":");
+  if (!appId) {
+    await interaction.reply({ content: "⚠️ Aplicação inválida.", ephemeral: true }).catch(() => null);
+    return;
+  }
+
+  // REJECT / ADJUST => abrir modal (não pode deferReply)
+  if (action === "reject") {
+    const modal = new ModalBuilder()
+      .setCustomId(`wl:reject_reason:${appId}:${interaction.channelId}:${interaction.message.id}`)
+      .setTitle("Reprovar whitelist");
+
+    const input = new TextInputBuilder()
+      .setCustomId("reason")
+      .setLabel("Motivo da reprovação")
+      .setPlaceholder("Explique com clareza o que faltou / o que está errado…")
+      .setStyle(TextInputStyle.Paragraph)
+      .setMaxLength(600)
+      .setRequired(false);
+
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (action === "adjust") {
+    const modal = new ModalBuilder()
+      .setCustomId(`wl:adjust_note:${appId}:${interaction.channelId}:${interaction.message.id}`)
+      .setTitle("Pedir ajuste");
+
+    const input = new TextInputBuilder()
+      .setCustomId("note")
+      .setLabel("O que o player precisa ajustar?")
+      .setPlaceholder("Ex.: explicar melhor o passado, corrigir SteamID64, reduzir metagaming…")
+      .setStyle(TextInputStyle.Paragraph)
+      .setMaxLength(600)
+      .setRequired(false);
+
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+    await interaction.showModal(modal);
+    return;
+  }
+
+  // APPROVE => pode deferReply
+  await interaction.deferReply({ ephemeral: true });
+
   const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
   if (!app) return interaction.editReply("❌ Aplicação não encontrada.");
+
+  // evita dupla decisão
+  if ([WhitelistStatus.APPROVED, WhitelistStatus.REJECTED].includes(app.status)) {
+    await interaction.editReply("⚠️ Essa whitelist já foi decidida.");
+    // tenta desabilitar botões do card
+    try {
+      await disableStaffDecisionComponents(interaction);
+    } catch {}
+    return;
+  }
 
   if (action === "approve") {
     await prisma.whitelistApplication.update({
@@ -271,6 +373,7 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
         decidedAt: new Date(),
         decidedById: interaction.user.id,
         decidedByTag: interaction.user.tag,
+        decisionNote: null,
       },
     });
 
@@ -284,39 +387,17 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
       }
     }
 
-    return interaction.editReply("✅ Whitelist aprovada.");
-  }
-
-  if (action === "reject") {
-    const modal = new ModalBuilder()
-      .setCustomId(`wl:reject_reason:${app.id}`)
-      .setTitle("Motivo da reprovação");
-
-    const input = new TextInputBuilder()
-      .setCustomId("reason")
-      .setLabel("Motivo (obrigatório)")
-      .setRequired(true)
-      .setStyle(TextInputStyle.Paragraph)
-      .setMaxLength(600);
-
-    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
-
-    // Modal precisa ser a PRIMEIRA resposta => aqui a gente já deferReply acima
-    // Então para rejeição, NÃO podemos deferReply antes.
-    // Como já deferimos, em alguns fluxos isso pode dar erro.
-    // Por isso, movemos a lógica: se action === "reject", precisamos abrir modal sem defer.
-    // Porém, como já estamos aqui, vamos fazer um fallback seguro:
+    // desabilita botões no card da staff + marca decisão no embed
     try {
-      // tenta abrir o modal mesmo assim (se não tiver sido respondido em algum caso)
-      await interaction.showModal(modal);
-    } catch {
-      await interaction.editReply("⚠️ Não consegui abrir o modal de motivo. Tente novamente.");
-    }
-    return;
+      await markStaffDecision(interaction, "✅ APROVADO", interaction.user.tag);
+    } catch {}
+
+    return interaction.editReply("✅ Whitelist aprovada.");
   }
 
   return interaction.editReply("⚠️ Ação inválida.");
 }
+
 
 /* =========================
    MODAL: REJECT REASON
@@ -327,7 +408,10 @@ export async function handleWhitelistRejectReasonModal(interaction: ModalSubmitI
   const guild = interaction.guild;
   if (!guild) return;
 
-  const appId = interaction.customId.split(":")[2];
+  const parts = interaction.customId.split(":");
+  const appId = parts[2];
+  const staffChannelId = parts[3];
+  const staffMessageId = parts[4];
   const reason = (interaction.fields.getTextInputValue("reason") ?? "").trim();
 
   const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
@@ -362,7 +446,113 @@ export async function handleWhitelistRejectReasonModal(interaction: ModalSubmitI
     }
   }
 
+  
+  // tenta desabilitar botões no card da staff (se o modal veio de um botão)
+  if (staffChannelId && staffMessageId) {
+    const ch = await guild.channels.fetch(staffChannelId).catch(() => null);
+    if (ch && ch.type === ChannelType.GuildText) {
+      const msg = await (ch as TextChannel).messages.fetch(staffMessageId).catch(() => null);
+      if (msg) {
+        const embeds = msg.embeds?.map((e) => EmbedBuilder.from(e)) ?? [];
+        if (embeds[0]) {
+          const now = new Date().toLocaleString("pt-BR");
+          embeds[0].setFooter({ text: `❌ REPROVADO • ${interaction.user.tag} • ${now}` });
+        }
+        await msg.edit({ embeds, components: [buildDecisionRow(appId, true)] }).catch(() => null);
+      }
+    }
+  }
+
   return interaction.editReply("❌ Reprovado e registrado.");
+}
+
+
+/* =========================
+   MODAL: ADJUST NOTE
+========================= */
+
+export async function handleWhitelistAdjustNoteModal(interaction: ModalSubmitInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const guild = interaction.guild;
+  if (!guild) return;
+
+  const parts = interaction.customId.split(":");
+  const appId = parts[2];
+  const staffChannelId = parts[3];
+  const staffMessageId = parts[4];
+  const note = (interaction.fields.getTextInputValue("note") ?? "").trim();
+
+  const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
+  const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
+  if (!app) return interaction.editReply("❌ Aplicação não encontrada.");
+
+  // marca como AJUSTE (não é reprovação; o player pode reenviar depois)
+  await prisma.whitelistApplication.update({
+    where: { id: app.id },
+    data: {
+      status: WhitelistStatus.ADJUST,
+      decidedAt: new Date(),
+      decidedById: interaction.user.id,
+      decidedByTag: interaction.user.tag,
+      decisionNote: note || null,
+    },
+  });
+
+  // devolve cargos para o player tentar novamente (opcional)
+  const target = await guild.members.fetch(app.userId).catch(() => null);
+  if (target) {
+    // mantém o cargo de whitelist se você quiser que ele consiga reenviar
+    if (cfg?.whitelistPreResultRoleId) await target.roles.remove(cfg.whitelistPreResultRoleId).catch(() => null);
+    // se você usa whitelistRoleId para liberar o canal de WL, mantenha.
+  }
+
+  // Log em canal (opcional) usando o mesmo reject log (ou crie um adjust log no futuro)
+  if (cfg?.whitelistRejectLogChannelId) {
+    const ch = await guild.channels.fetch(cfg.whitelistRejectLogChannelId).catch(() => null);
+    if (ch && ch.type === ChannelType.GuildText) {
+      await (ch as TextChannel).send(
+        `✍️ Ajuste solicitado: <@${app.userId}> por <@${interaction.user.id}>
+Nota: **${note || "—"}**`
+      );
+    }
+  }
+
+  // DM pro player (opcional)
+  try {
+    const user = await guild.client.users.fetch(app.userId);
+    await user.send(
+      `✍️ **Whitelist — Ajuste solicitado**
+` +
+        `Servidor: **${guild.name}**
+` +
+        `Nota da staff: **${note || "—"}**
+
+` +
+        `Você pode reenviar sua whitelist iniciando novamente pelo botão.`
+    );
+  } catch {
+    // ignora se DM fechado
+  }
+
+  
+  // tenta desabilitar botões no card da staff (se o modal veio de um botão)
+  if (staffChannelId && staffMessageId) {
+    const ch = await guild.channels.fetch(staffChannelId).catch(() => null);
+    if (ch && ch.type === ChannelType.GuildText) {
+      const msg = await (ch as TextChannel).messages.fetch(staffMessageId).catch(() => null);
+      if (msg) {
+        const embeds = msg.embeds?.map((e) => EmbedBuilder.from(e)) ?? [];
+        if (embeds[0]) {
+          const now = new Date().toLocaleString("pt-BR");
+          embeds[0].setFooter({ text: `✍️ AJUSTE • ${interaction.user.tag} • ${now}` });
+        }
+        await msg.edit({ embeds, components: [buildDecisionRow(appId, true)] }).catch(() => null);
+      }
+    }
+  }
+
+  return interaction.editReply("✍️ Ajuste registrado e notificado (se possível).");
 }
 
 /* =========================
@@ -400,7 +590,8 @@ async function sendToStaff(guildId: string, appId: string) {
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`wl:approve:${app.id}`).setLabel("✅ Aprovar").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`wl:reject:${app.id}`).setLabel("❌ Reprovar").setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId(`wl:reject:${app.id}`).setLabel("❌ Reprovar").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`wl:adjust:${app.id}`).setLabel("✍️ Ajuste").setStyle(ButtonStyle.Secondary)
   );
 
   await (ch as TextChannel).send({ embeds: [embed], components: [row] });
