@@ -7,6 +7,7 @@ import {
   ButtonStyle,
   TextChannel,
   EmbedBuilder,
+  AttachmentBuilder,
 } from "discord.js";
 
 import { prisma } from "../../core/prisma.js";
@@ -44,49 +45,63 @@ function closeRow(ticketId: string) {
   );
 }
 
-// ✅ transcript simples (HTML) sem depender de outro arquivo
-async function buildHtmlTranscript(channel: TextChannel) {
-  const msgs = await channel.messages.fetch({ limit: 100 }).catch(() => null);
-  const arr = msgs ? Array.from(msgs.values()).sort((a, b) => a.createdTimestamp - b.createdTimestamp) : [];
+async function fetchAllMessages(channel: TextChannel) {
+  const all = [] as any[];
+  let lastId: string | undefined;
 
-  const escape = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  while (true) {
+    const batch = await channel.messages.fetch({ limit: 100, before: lastId }).catch(() => null);
+    if (!batch || batch.size === 0) break;
+    const arr = Array.from(batch.values());
+    all.push(...arr);
+    lastId = arr[arr.length - 1]?.id;
+    if (batch.size < 100) break;
+  }
 
-  const rows = arr
-    .map((m) => {
-      const time = new Date(m.createdTimestamp).toISOString();
-      const author = `${m.author.username}#${m.author.discriminator}`;
-      const content = m.content ? escape(m.content) : "";
-      const attachments = m.attachments.size
-        ? `<div class="att">📎 ${Array.from(m.attachments.values())
-            .map((a) => `<a href="${escape(a.url)}">${escape(a.name ?? "file")}</a>`)
-            .join(" | ")}</div>`
-        : "";
-      return `<div class="msg"><div class="meta"><b>${escape(author)}</b> <span>${escape(time)}</span></div><div class="txt">${content || "<i>(sem texto)</i>"}</div>${attachments}</div>`;
-    })
-    .join("\n");
+  all.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+  return all;
+}
 
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Transcript ${escape(channel.name)}</title>
-<style>
-body{font-family:Arial,Helvetica,sans-serif;background:#0b0f17;color:#e6e6e6;padding:20px}
-h1{font-size:18px}
-.msg{padding:10px;border:1px solid #222b3a;border-radius:10px;margin:10px 0;background:#0f1626}
-.meta{font-size:12px;opacity:.9;margin-bottom:6px;display:flex;gap:10px;align-items:center}
-.meta span{opacity:.7}
-.txt{white-space:pre-wrap;font-size:14px}
-.att{margin-top:6px;font-size:12px;opacity:.9}
-a{color:#7dd3fc}
-</style>
-</head>
-<body>
-<h1>Transcript: #${escape(channel.name)} (${escape(channel.id)})</h1>
-${rows || "<i>Nenhuma mensagem encontrada.</i>"}
-</body>
-</html>`;
+// ✅ transcript em .TXT (todas as mensagens + links de anexos/imagens)
+async function buildTxtTranscript(channel: TextChannel) {
+  const msgs = await fetchAllMessages(channel);
+
+  const lines: string[] = [];
+  lines.push("=== BLACKBOT | TRANSCRIPT DE TICKET ===");
+  lines.push(`Canal: #${channel.name}`);
+  lines.push(`ID: ${channel.id}`);
+  lines.push(`Gerado em: ${new Date().toISOString()}`);
+  lines.push("======================================");
+  lines.push("");
+
+  for (const m of msgs) {
+    const ts = new Date(m.createdTimestamp).toISOString();
+    lines.push(`[${ts}] ${m.author.tag} (${m.author.id})`);
+
+    if (m.content?.trim()) {
+      lines.push(m.content);
+    }
+
+    if (m.attachments?.size) {
+      for (const a of m.attachments.values()) {
+        lines.push(`(ANEXO) ${a.name ?? "arquivo"} -> ${a.url}`);
+      }
+    }
+
+    if (m.embeds?.length) {
+      for (const e of m.embeds) {
+        if (e.title) lines.push(`(EMBED) ${e.title}`);
+        if (e.description) lines.push(`(EMBED) ${e.description}`);
+      }
+    }
+
+    lines.push("");
+  }
+
+  const content = lines.join("\n");
+  return new AttachmentBuilder(Buffer.from(content, "utf-8"), {
+    name: `transcript-${channel.id}.txt`,
+  });
 }
 
 function parseTypeFromCustomId(customId: string): TicketType | null {
@@ -210,8 +225,8 @@ export async function handleTicketButton(i: ButtonInteraction) {
 
     const channel = ch as TextChannel;
 
-    // transcript html
-    const html = await buildHtmlTranscript(channel);
+    // transcript TXT (todas as mensagens + links de anexos)
+    const transcript = await buildTxtTranscript(channel);
 
     // envia no canal de log
     if (logChannelId) {
@@ -219,9 +234,20 @@ export async function handleTicketButton(i: ButtonInteraction) {
       if (logCh && logCh.isTextBased()) {
         await logCh.send({
           content: `📄 Transcript do ticket **${ticketId}** | <@${ticket.userId}> | <#${ticket.channelId}>`,
-          files: [{ attachment: Buffer.from(html, "utf-8"), name: `ticket-${ticketId}.html` }],
+          files: [transcript],
         });
       }
+    }
+
+    // envia no DM da pessoa que abriu o ticket
+    try {
+      const opener = await i.client.users.fetch(ticket.userId);
+      await opener.send({
+        content: "📄 Aqui está o transcript do seu ticket (mensagens + anexos) para referência futura:",
+        files: [transcript],
+      });
+    } catch {
+      // DM fechada/bloqueada
     }
 
     // atualiza ticket
