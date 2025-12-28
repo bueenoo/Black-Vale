@@ -1,522 +1,407 @@
 import {
-  ActionRowBuilder,
-  ButtonBuilder,
   ButtonInteraction,
-  ButtonStyle,
-  ChannelType,
-  EmbedBuilder,
-  Guild,
-  ModalBuilder,
   ModalSubmitInteraction,
-  Message,
-  PermissionFlagsBits,
-  TextChannel,
+  ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  ChannelType,
+  PermissionFlagsBits,
+  TextChannel,
 } from "discord.js";
 
 import { prisma } from "../../core/prisma.js";
+import { WhitelistStatus } from "@prisma/client";
 
-/**
- * Whitelist contínua (por thread) + refazer WL ilimitado + painel de staff com Aprovar/Reprovar/Ajuste.
- *
- * Model Prisma usado:
- * - GuildConfig.whitelistStaffChannelId
- * - WhitelistApplication (status: IN_PROGRESS | SUBMITTED | APPROVED | REJECTED | ADJUST | EXPIRED)
- */
+/* =========================
+   TYPES
+========================= */
 
-type Q = { key: string; text: string; max?: number; validator?: (v: string) => string | null };
+type Question = {
+  key: string;
+  title: string;
+  placeholder: string;
+  style: TextInputStyle;
+  maxLength: number;
+};
 
-const QUESTIONS: Q[] = [
-  { key: "nome", text: "🧍 **Quem é você?**\nDiga o nome que sobrou depois que o mundo acabou.", max: 80 },
-  { key: "origem", text: "🌍 **De onde você veio?**\nO que aconteceu lá e por que você nunca voltou?", max: 500 },
-  { key: "sobrevivencia", text: "🩸 **O que você fez para sobreviver?**\nAqui ninguém está limpo. E você?", max: 500 },
-  { key: "confianca", text: "🤝 **Em quem você confia hoje — pessoas, grupos ou só em si mesmo?**\nExplique.", max: 250 },
-  { key: "limite", text: "⚖️ **Até onde você iria para viver mais um dia?**\nMentir, roubar ou abandonar alguém?", max: 350 },
-  {
-    key: "steamId",
-    text: "🎮 **SteamID64 (obrigatório):**\nEnvie apenas números (17 dígitos).",
-    max: 32,
-    validator: (v) => (/^\d{17}$/.test(v.trim()) ? null : "SteamID64 inválida. Envie **17 dígitos** (apenas números)."),
-  },
-  {
-    key: "historia",
-    text: "📜 **História (até 200 caracteres):**\nUma breve história do seu personagem baseada na lore do servidor.",
-    max: 200,
-    validator: (v) => (v.trim().length <= 200 ? null : `Sua história passou de 200 caracteres (${v.trim().length}).`),
-  },
-];
+/* =========================
+   HELPERS
+========================= */
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function safeUsernameTag(user: { username: string; discriminator?: string }) {
-  return user.discriminator && user.discriminator !== "0"
-    ? `${user.username}#${user.discriminator}`
-    : user.username;
-}
-
-async function getConfig(guildId: string) {
-  return prisma.guildConfig.upsert({
-    where: { guildId },
-    update: {},
-    create: { guildId },
-  });
-}
-
-async function expireActiveApps(guildId: string, userId: string) {
-  await prisma.whitelistApplication.updateMany({
-    where: { guildId, userId, status: { in: ["IN_PROGRESS", "SUBMITTED"] } },
-    data: {
-      status: "EXPIRED",
-      decidedAt: new Date(),
-      decisionNote: "Substituída por nova tentativa",
-    },
-  });
-}
-
-async function createNewApp(guild: Guild, userId: string, userTag: string) {
-  await expireActiveApps(guild.id, userId);
-
-  return prisma.whitelistApplication.create({
-    data: {
-      guildId: guild.id,
-      userId,
-      userTag,
-      status: "IN_PROGRESS",
-      currentStep: 0,
-      answers: { _meta: { startedAt: nowIso() } },
-    },
-  });
-}
-
-async function getLatestActiveApp(guildId: string, userId: string) {
+async function findLatestApp(guildId: string, userId: string) {
   return prisma.whitelistApplication.findFirst({
-    where: { guildId, userId, status: { in: ["IN_PROGRESS", "SUBMITTED"] } },
+    where: { guildId, userId },
     orderBy: { createdAt: "desc" },
   });
 }
 
-function buildStaffEmbed(app: any) {
-  const a = (app.answers ?? {}) as Record<string, any>;
-  const meta = (a._meta ?? {}) as Record<string, any>;
-
-  const embed = new EmbedBuilder()
-    .setTitle("🧾 Whitelist — Aplicação")
-    .addFields(
-      { name: "User", value: `<@${app.userId}> (${app.userTag ?? "—"})`, inline: false },
-      { name: "SteamID64", value: app.steamId ?? a.steamId ?? "—", inline: true },
-      { name: "Status", value: String(app.status), inline: true },
-    )
-    .setFooter({ text: meta.startedAt ? `Iniciada: ${meta.startedAt}` : "Blacklist WL" });
-
-  // respostas
-  const pairs: [string, string][] = [
-    ["Nome", a.nome ?? "—"],
-    ["Origem", a.origem ?? "—"],
-    ["Sobrevivência", a.sobrevivencia ?? "—"],
-    ["Confiança", a.confianca ?? "—"],
-    ["Limite", a.limite ?? "—"],
-    ["História", a.historia ?? "—"],
-  ];
-
-  for (const [k, v] of pairs) {
-    embed.addFields({ name: k, value: String(v).slice(0, 1024) || "—", inline: false });
-  }
-
-  return embed;
+function steamIdOk(v: string) {
+  return /^\d{17}$/.test(v.trim());
 }
 
-function staffButtons(appId: string, disabled = false) {
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`wl:decision:approve:${appId}`)
-        .setLabel("Aprovar")
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(disabled),
-      new ButtonBuilder()
-        .setCustomId(`wl:decision:reject:${appId}`)
-        .setLabel("Reprovar")
-        .setStyle(ButtonStyle.Danger)
-        .setDisabled(disabled),
-      new ButtonBuilder()
-        .setCustomId(`wl:decision:adjust:${appId}`)
-        .setLabel("Ajuste")
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(disabled),
-    ),
-  ];
+function countLines(v: string) {
+  return v.split(/\r?\n/).filter((l) => l.trim()).length;
 }
 
-async function sendToStaff(guild: Guild, app: any) {
-  const cfg = await getConfig(guild.id);
-  const staffChannelId = cfg.whitelistStaffChannelId;
+/* =========================
+   QUESTIONS
+========================= */
 
-  if (!staffChannelId) return;
+const QUESTIONS = [
+  {
+    key: "steamId",
+    title: "SteamID",
+    placeholder: "Informe sua SteamID64 (17 dígitos).",
+    style: TextInputStyle.Short,
+    maxLength: 32,
+  },
+  {
+    key: "q1",
+    title: "Quem é você?",
+    placeholder: "Diga o nome que sobrou depois que o mundo acabou.",
+    style: TextInputStyle.Short,
+    maxLength: 200,
+  },
+  {
+    key: "q2",
+    title: "Origem",
+    placeholder: "De onde você veio? O que aconteceu lá? Por que nunca voltou?",
+    style: TextInputStyle.Paragraph,
+    maxLength: 1000,
+  },
+  {
+    key: "q3",
+    title: "Sobrevivência",
+    placeholder: "O que você fez para sobreviver até aqui?",
+    style: TextInputStyle.Paragraph,
+    maxLength: 1000,
+  },
+  {
+    key: "q4",
+    title: "RP HARD (obrigatório)",
+    placeholder: "Explique MetaGaming, PowerGaming e por que a morte deve ser temida no RP.",
+    style: TextInputStyle.Paragraph,
+    maxLength: 1000,
+  },
+  {
+    key: "q5",
+    title: "Cena final (mín. 6 linhas)",
+    placeholder: "Narre sua chegada ao Vale dos Ossos. Ambiente, silêncio, medo...",
+    style: TextInputStyle.Paragraph,
+    maxLength: 1000,
+  },
+] satisfies Question[];
 
-  if (!staffChannelId) return;
-  if (!staffMessageId) {
-    // Se a decisão veio pelo botão, a mensagem está em interaction.message
-    // e já foi preenchida acima.
-  }
-  const staffChannel = await guild.channels.fetch(staffChannelId).catch(() => null);
-  if (!staffChannel || staffChannel.type !== ChannelType.GuildText) return;
+/* =========================
+   START WHITELIST
+========================= */
 
-  const embed = buildStaffEmbed(app);
-
-  const msg = await (staffChannel as TextChannel).send({
-    content: "🔎 Nova whitelist para análise:",
-    embeds: [embed],
-    components: staffButtons(app.id, false),
-  });
-
-  // guarda refs no answers para edição posterior (opcional)
-  const answers = (app.answers ?? {}) as any;
-  answers._meta = { ...(answers._meta ?? {}), staffChannelId, staffMessageId: msg.id };
-  await prisma.whitelistApplication.update({ where: { id: app.id }, data: { answers } });
-}
-
-async function lockThread(thread: any, reason: string) {
-  try {
-    if (thread?.isThread()) {
-      await thread.setLocked(true, reason).catch(() => null);
-      await thread.setArchived(true, reason).catch(() => null);
-    }
-  } catch {}
-}
-
-/**
- * BOTÃO: iniciar whitelist
- * - sempre permite refazer (expira tentativa anterior)
- * - cria thread e começa perguntas
- */
 export async function whitelistStartButton(interaction: ButtonInteraction) {
-  await interaction.deferReply({ ephemeral: true });
-
   const guild = interaction.guild;
   if (!guild) return;
 
-  const userId = interaction.user.id;
-  const userTag = safeUsernameTag(interaction.user);
-
-  // cria nova tentativa (e expira ativa)
-  const app = await createNewApp(guild, userId, userTag);
-
-  // canal base
-  const ch = interaction.channel;
-  if (!ch || ch.type !== ChannelType.GuildText) {
-    return interaction.editReply("❌ Use este botão em um canal de texto do servidor.");
-  }
-
-  // precisa criar thread
-  const me = guild.members.me;
-  if (me) {
-    const perms = ch.permissionsFor(me);
-    if (!perms?.has(PermissionFlagsBits.CreatePublicThreads) || !perms.has(PermissionFlagsBits.SendMessagesInThreads)) {
-      return interaction.editReply("❌ Preciso das permissões **Create Public Threads** e **Send Messages in Threads** neste canal.");
-    }
-  }
-
-  const thread = await (ch as TextChannel).threads.create({
-    name: `wl-${interaction.user.username}-${app.id.slice(0, 6)}`,
-    autoArchiveDuration: 1440,
-    reason: "Whitelist contínua",
+  // anti-spam: já preenchendo ou já enviada
+  const pending = await prisma.whitelistApplication.findFirst({
+    where: {
+      guildId: guild.id,
+      userId: interaction.user.id,
+      status: { in: [WhitelistStatus.IN_PROGRESS, WhitelistStatus.SUBMITTED] },
+    },
   });
 
-  await thread.members.add(userId).catch(() => null);
-
-  // salva thread no meta (sem mudar schema)
-  const answers = (app.answers ?? {}) as any;
-  answers._meta = { ...(answers._meta ?? {}), threadId: thread.id, threadChannelId: thread.id };
-  await prisma.whitelistApplication.update({ where: { id: app.id }, data: { answers } });
-
-  await interaction.editReply(`✅ Whitelist iniciada em: <#${thread.id}>`);
-
-  await thread.send(
-    "🧾 **Whitelist — Vale dos Ossos**\n" +
-      "Responda **uma pergunta por vez**. Se errar, você pode clicar em **Iniciar Whitelist** novamente.\n\n" +
-      `**Pergunta 1/${QUESTIONS.length}**\n${QUESTIONS[0].text}`,
-  );
-}
-
-/**
- * MESSAGE FLOW: perguntas contínuas (thread)
- * - salva resposta
- * - valida
- * - envia próxima
- * - ao final: SUBMITTED + envia pra staff
- */
-export async function handleWhitelistThreadMessage(message: Message) {
-  if (message.author.bot) return;
-  const guild = message.guild;
-  if (!guild) return;
-
-  if (!message.channel.isThread()) return;
-  const thread = message.channel;
-
-  const app = await prisma.whitelistApplication.findFirst({
-    where: { guildId: guild.id, userId: message.author.id, status: "IN_PROGRESS" },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!app) return;
-
-  // garante que essa thread é da aplicação (se tiver meta)
-  const meta = ((app.answers as any)?._meta ?? {}) as any;
-  if (meta.threadId && meta.threadId !== thread.id) return;
-
-  const step = app.currentStep;
-  const q = QUESTIONS[step];
-  if (!q) return;
-
-  const answer = message.content.trim();
-
-  if (q.max && answer.length > q.max) {
-    await thread.send(`⚠️ Resposta muito longa. Limite: **${q.max}** caracteres. Tente novamente.`);
+  if (pending) {
+    // Aqui NÃO abrimos modal, então podemos responder normal
+    await interaction.reply({
+      content: "📝 Você já tem uma whitelist em andamento / em análise.",
+      ephemeral: true,
+    });
     return;
   }
-  if (q.validator) {
-    const err = q.validator(answer);
-    if (err) {
-      await thread.send(`⚠️ ${err}`);
-      return;
-    }
+
+  await prisma.whitelistApplication.create({
+    data: {
+      guildId: guild.id,
+      userId: interaction.user.id,
+      userTag: interaction.user.tag,
+      status: WhitelistStatus.IN_PROGRESS,
+      currentStep: 0,
+      answers: {},
+    },
+  });
+
+  // Modal precisa ser a PRIMEIRA resposta dessa interaction
+  await showQuestionModal(interaction, 1);
+}
+
+/* =========================
+   MODAL: SHOW QUESTION
+========================= */
+
+async function showQuestionModal(interaction: ButtonInteraction, step: number) {
+  const q = QUESTIONS[step - 1];
+  if (!q) return;
+
+  const modal = new ModalBuilder()
+    .setCustomId(`wl:answer:${step}`)
+    .setTitle(q.title);
+
+  const input = new TextInputBuilder()
+    .setCustomId("answer")
+    .setLabel(q.title)
+    .setPlaceholder(q.placeholder)
+    .setRequired(true)
+    .setStyle(q.style)
+    .setMaxLength(q.maxLength);
+
+  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+  await interaction.showModal(modal);
+}
+
+/* =========================
+   MODAL: SAVE ANSWER
+========================= */
+
+export async function handleWhitelistAnswerModal(interaction: ModalSubmitInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+  const guild = interaction.guild;
+  if (!guild) return;
+
+  const step = Number(interaction.customId.split(":")[2]);
+  const q = QUESTIONS[step - 1];
+  if (!q) return interaction.editReply("❌ Etapa inválida.");
+
+  const answer = (interaction.fields.getTextInputValue("answer") ?? "").trim();
+
+  const app = await findLatestApp(guild.id, interaction.user.id);
+  if (!app) return interaction.editReply("❌ Aplicação não encontrada. Inicie novamente.");
+
+  // validações
+  if (q.key === "steamId" && !steamIdOk(answer)) {
+    return interaction.editReply("❌ SteamID inválida. Use SteamID64 (17 dígitos).");
   }
 
-  const answers = (app.answers ?? {}) as any;
-  answers[q.key] = answer;
-  answers._meta = { ...(answers._meta ?? {}), lastAnsweredAt: nowIso() };
+  if (q.key === "q5" && countLines(answer) < 6) {
+    return interaction.editReply("❌ A cena final precisa ter no mínimo **6 linhas**.");
+  }
 
-  const nextStep = step + 1;
+  const answers = (app.answers as any) ?? {};
+  answers[q.key] = answer;
 
   await prisma.whitelistApplication.update({
     where: { id: app.id },
     data: {
       answers,
-      currentStep: nextStep,
+      currentStep: step,
       steamId: q.key === "steamId" ? answer : app.steamId,
-      status: nextStep >= QUESTIONS.length ? "SUBMITTED" : "IN_PROGRESS",
-      submittedAt: nextStep >= QUESTIONS.length ? new Date() : app.submittedAt,
     },
   });
 
-  if (nextStep >= QUESTIONS.length) {
-    await thread.send("✅ **Whitelist finalizada!** Sua aplicação foi enviada para análise da staff.");
-    const refreshed = await prisma.whitelistApplication.findUnique({ where: { id: app.id } });
-    if (refreshed) await sendToStaff(guild, refreshed);
-    return;
+  // continuar
+  if (step < QUESTIONS.length) {
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`wl:next:${step + 1}`)
+        .setLabel("Continuar")
+        .setStyle(ButtonStyle.Success)
+    );
+
+    return interaction.editReply({
+      content: `✅ Etapa ${step}/${QUESTIONS.length} salva.`,
+      components: [row],
+    });
   }
 
-  await thread.send(`**Pergunta ${nextStep + 1}/${QUESTIONS.length}**\n${QUESTIONS[nextStep].text}`);
+  // finaliza
+  await prisma.whitelistApplication.update({
+    where: { id: app.id },
+    data: {
+      status: WhitelistStatus.SUBMITTED,
+      submittedAt: new Date(),
+    },
+  });
+
+  await sendToStaff(guild.id, app.id);
+
+  return interaction.editReply("📼 Whitelist enviada para análise.");
 }
 
 /* =========================
-   STAFF: DECISION BUTTONS
+   BUTTON: NEXT STEP + DECISIONS
 ========================= */
 
 export async function handleWhitelistDecisionButton(interaction: ButtonInteraction) {
-  await interaction.deferReply({ ephemeral: true });
   const guild = interaction.guild;
   if (!guild) return;
 
-  const parts = interaction.customId.split(":");
-  // wl:decision:<approve|reject|adjust>:<appId>
-  const action = parts[2];
-  const appId = parts[3];
-  if (!action || !appId) return interaction.editReply("❌ Ação inválida.");
-
-  const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
-  if (!app) return interaction.editReply("❌ Aplicação não encontrada.");
-
-  // Aprovar direto
-  if (action === "approve") {
-    await applyDecisionAndUpdateCard(interaction, appId, "APPROVED", null);
-    await interaction.editReply("✅ Aprovado.");
+  // NEXT (abre modal => NÃO pode deferReply)
+  if (interaction.customId.startsWith("wl:next:")) {
+    const nextStep = Number(interaction.customId.split(":")[2]);
+    await showQuestionModal(interaction, nextStep);
     return;
   }
 
-  // Reprovar -> modal motivo
+  // DECISIONS
+  await interaction.deferReply({ ephemeral: true });
+
+  const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
+
+  const member = await guild.members.fetch(interaction.user.id);
+  const isStaff =
+    member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+    (cfg?.staffRoleId && member.roles.cache.has(cfg.staffRoleId));
+
+  if (!isStaff) {
+    await interaction.editReply("⛔ Apenas staff pode decidir.");
+    return;
+  }
+
+  const [, action, appId] = interaction.customId.split(":");
+  const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
+  if (!app) return interaction.editReply("❌ Aplicação não encontrada.");
+
+  if (action === "approve") {
+    await prisma.whitelistApplication.update({
+      where: { id: app.id },
+      data: {
+        status: WhitelistStatus.APPROVED,
+        decidedAt: new Date(),
+        decidedById: interaction.user.id,
+        decidedByTag: interaction.user.tag,
+      },
+    });
+
+    // cargos (opcional)
+    if (cfg?.whitelistApprovedRoleId) {
+      const target = await guild.members.fetch(app.userId).catch(() => null);
+      if (target) {
+        await target.roles.add(cfg.whitelistApprovedRoleId).catch(() => null);
+        if (cfg.whitelistPreResultRoleId) await target.roles.remove(cfg.whitelistPreResultRoleId).catch(() => null);
+        if (cfg.whitelistRoleId) await target.roles.remove(cfg.whitelistRoleId).catch(() => null);
+      }
+    }
+
+    return interaction.editReply("✅ Whitelist aprovada.");
+  }
+
   if (action === "reject") {
     const modal = new ModalBuilder()
-      .setCustomId(`wl:reject_reason:${appId}:${interaction.channelId}:${interaction.message.id}`)
+      .setCustomId(`wl:reject_reason:${app.id}`)
       .setTitle("Motivo da reprovação");
 
     const input = new TextInputBuilder()
       .setCustomId("reason")
-      .setLabel("Motivo (será registrado)")
-      .setStyle(TextInputStyle.Paragraph)
+      .setLabel("Motivo (obrigatório)")
       .setRequired(true)
-      .setMaxLength(400);
+      .setStyle(TextInputStyle.Paragraph)
+      .setMaxLength(600);
 
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
-    await interaction.showModal(modal);
+
+    // Modal precisa ser a PRIMEIRA resposta => aqui a gente já deferReply acima
+    // Então para rejeição, NÃO podemos deferReply antes.
+    // Como já deferimos, em alguns fluxos isso pode dar erro.
+    // Por isso, movemos a lógica: se action === "reject", precisamos abrir modal sem defer.
+    // Porém, como já estamos aqui, vamos fazer um fallback seguro:
+    try {
+      // tenta abrir o modal mesmo assim (se não tiver sido respondido em algum caso)
+      await interaction.showModal(modal);
+    } catch {
+      await interaction.editReply("⚠️ Não consegui abrir o modal de motivo. Tente novamente.");
+    }
     return;
   }
 
-  // Ajuste -> modal nota
-  if (action === "adjust") {
-    const modal = new ModalBuilder()
-      .setCustomId(`wl:adjust_note:${appId}:${interaction.channelId}:${interaction.message.id}`)
-      .setTitle("Pedido de ajuste");
-
-    const input = new TextInputBuilder()
-      .setCustomId("note")
-      .setLabel("O que o player deve ajustar?")
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-      .setMaxLength(400);
-
-    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
-    await interaction.showModal(modal);
-    return;
-  }
-
-  await interaction.editReply("❌ Ação não reconhecida.");
-}
-
-async function applyDecisionAndUpdateCard(
-  interaction: ButtonInteraction | ModalSubmitInteraction,
-  appId: string,
-  status: "APPROVED" | "REJECTED" | "ADJUST",
-  note: string | null,
-) {
-  const guild = interaction.guild!;
-  const cfg = await getConfig(guild.id);
-
-  const decidedById = interaction.user.id;
-  const decidedByTag = safeUsernameTag(interaction.user);
-
-  const updated = await prisma.whitelistApplication.update({
-    where: { id: appId },
-    data: {
-      status,
-      decidedAt: new Date(),
-      decidedById,
-      decidedByTag,
-      decisionNote: note ?? undefined,
-    },
-  });
-
-  // cargo/roles
-  const member = await guild.members.fetch(updated.userId).catch(() => null);
-  if (member) {
-    // roles envolvidos (se existirem no config)
-    const approvedRoleId = cfg.whitelistApprovedRoleId ?? undefined;
-    const rejectedRoleId = cfg.whitelistRejectedRoleId ?? undefined;
-    const preRoleId = cfg.whitelistPreResultRoleId ?? undefined;
-    const whitelistRoleId = cfg.whitelistRoleId ?? undefined;
-
-    if (preRoleId) await member.roles.remove(preRoleId).catch(() => null);
-
-    if (status === "APPROVED") {
-      if (approvedRoleId) await member.roles.add(approvedRoleId).catch(() => null);
-      if (rejectedRoleId) await member.roles.remove(rejectedRoleId).catch(() => null);
-      if (whitelistRoleId) await member.roles.remove(whitelistRoleId).catch(() => null);
-    }
-
-    if (status === "REJECTED") {
-      if (rejectedRoleId) await member.roles.add(rejectedRoleId).catch(() => null);
-    }
-  }
-
-  // editar card da staff e desabilitar botões
-  // no caso do modal, customId tem ...:<channelId>:<messageId>
-  let staffChannelId = interaction.channelId;
-  let staffMessageId: string | null = null;
-
-  if ("customId" in interaction && interaction.customId.includes("wl:reject_reason:")) {
-    const p = interaction.customId.split(":");
-    const chId = p[3];
-    if (chId) staffChannelId = chId;
-    const msgId = p[4];
-    if (msgId) staffMessageId = msgId;
-  }
-  if ("customId" in interaction && interaction.customId.includes("wl:adjust_note:")) {
-    const p = interaction.customId.split(":");
-    const chId = p[3];
-    if (chId) staffChannelId = chId;
-    const msgId = p[4];
-    if (msgId) staffMessageId = msgId;
-  }
-  if ("message" in interaction && interaction.message?.id) {
-    staffMessageId = staffMessageId ?? interaction.message.id;
-  }
-
-  if (!staffChannelId) return;
-  if (!staffMessageId) {
-    // Se a decisão veio pelo botão, a mensagem está em interaction.message
-    // e já foi preenchida acima.
-  }
-  const staffChannel = await guild.channels.fetch(staffChannelId).catch(() => null);
-  if (staffChannel && staffChannel.type === ChannelType.GuildText && staffMessageId) {
-    const msg = await (staffChannel as TextChannel).messages.fetch(staffMessageId).catch(() => null);
-    if (msg) {
-      const embed = buildStaffEmbed(updated);
-      const footer = `${status} • ${decidedByTag} • ${new Date().toLocaleString("pt-BR")}`;
-      embed.setFooter({ text: footer });
-
-      await msg.edit({
-        embeds: [embed],
-        components: staffButtons(appId, true),
-      }).catch(() => null);
-    }
-  }
-
-  // tentar DM pro usuário
-  const user = await guild.client.users.fetch(updated.userId).catch(() => null);
-  if (user) {
-    const pretty = status === "APPROVED" ? "✅ APROVADO" : status === "REJECTED" ? "❌ REPROVADO" : "✍️ AJUSTE SOLICITADO";
-    const text = note ? `\n\n📝 Nota: ${note}` : "";
-    await user.send(`📄 Sua whitelist foi marcada como **${pretty}**.${text}`).catch(() => null);
-  }
-
-  // se tiver thread, arquivar/lock
-  const meta = ((updated.answers as any)?._meta ?? {}) as any;
-  if (meta.threadId) {
-    const th = await guild.channels.fetch(meta.threadId).catch(() => null);
-    await lockThread(th, `Whitelist ${status}`);
-  }
-
-  // se reprovado, mandar no canal de log se configurado
-  if (status === "REJECTED" && cfg.whitelistRejectLogChannelId) {
-    const logCh = await guild.channels.fetch(cfg.whitelistRejectLogChannelId).catch(() => null);
-    if (logCh && logCh.type === ChannelType.GuildText) {
-      await (logCh as TextChannel).send({
-        content: `❌ Whitelist reprovada: <@${updated.userId}> (${updated.userTag ?? "—"})\nMotivo: ${note ?? "—"}`,
-      }).catch(() => null);
-    }
-  }
+  return interaction.editReply("⚠️ Ação inválida.");
 }
 
 /* =========================
-   STAFF MODALS
+   MODAL: REJECT REASON
 ========================= */
 
 export async function handleWhitelistRejectReasonModal(interaction: ModalSubmitInteraction) {
   await interaction.deferReply({ ephemeral: true });
+  const guild = interaction.guild;
+  if (!guild) return;
+
   const appId = interaction.customId.split(":")[2];
   const reason = (interaction.fields.getTextInputValue("reason") ?? "").trim();
-  if (!appId) return interaction.editReply("❌ Aplicação inválida.");
 
-  await applyDecisionAndUpdateCard(interaction, appId, "REJECTED", reason);
-  await interaction.editReply("✅ Reprovação registrada.");
+  const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
+  const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
+  if (!app) return interaction.editReply("❌ Aplicação não encontrada.");
+
+  await prisma.whitelistApplication.update({
+    where: { id: app.id },
+    data: {
+      status: WhitelistStatus.REJECTED,
+      decidedAt: new Date(),
+      decidedById: interaction.user.id,
+      decidedByTag: interaction.user.tag,
+      decisionNote: reason,
+    },
+  });
+
+  // cargos (opcional)
+  const target = await guild.members.fetch(app.userId).catch(() => null);
+  if (target) {
+    if (cfg?.whitelistRejectedRoleId) await target.roles.add(cfg.whitelistRejectedRoleId).catch(() => null);
+    if (cfg?.whitelistPreResultRoleId) await target.roles.remove(cfg.whitelistPreResultRoleId).catch(() => null);
+  }
+
+  // log reprovação
+  if (cfg?.whitelistRejectLogChannelId) {
+    const ch = await guild.channels.fetch(cfg.whitelistRejectLogChannelId).catch(() => null);
+    if (ch && ch.type === ChannelType.GuildText) {
+      await (ch as TextChannel).send(
+        `❌ Reprovado: <@${app.userId}> por <@${interaction.user.id}>\nMotivo: **${reason || "—"}**`
+      );
+    }
+  }
+
+  return interaction.editReply("❌ Reprovado e registrado.");
 }
 
-export async function handleWhitelistAdjustNoteModal(interaction: ModalSubmitInteraction) {
-  await interaction.deferReply({ ephemeral: true });
-  const appId = interaction.customId.split(":")[2];
-  const note = (interaction.fields.getTextInputValue("note") ?? "").trim();
-  if (!appId) return interaction.editReply("❌ Aplicação inválida.");
+/* =========================
+   STAFF MESSAGE
+========================= */
 
-  await applyDecisionAndUpdateCard(interaction, appId, "ADJUST", note);
-  await interaction.editReply("✅ Ajuste solicitado.");
-}
+async function sendToStaff(guildId: string, appId: string) {
+  const cfg = await prisma.guildConfig.findUnique({ where: { guildId } });
+  if (!cfg?.whitelistStaffChannelId) return;
 
-/**
- * Compat (caso seu roteador ainda chame esse handler antigo).
- * Não usado no fluxo contínuo.
- */
-export async function handleWhitelistAnswerModal(_interaction: ModalSubmitInteraction) {
-  // fluxo antigo removido
+  const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
+  if (!app) return;
+
+  const client: any = (globalThis as any).__blackbot_client;
+  const guild = client?.guilds?.cache?.get(guildId);
+  if (!guild) return;
+
+  const ch = guild.channels.cache.get(cfg.whitelistStaffChannelId);
+  if (!ch || ch.type !== ChannelType.GuildText) return;
+
+  const a = (app.answers as any) ?? {};
+
+  const fields = [
+    { name: "Usuário", value: `<@${app.userId}> (\`${app.userId}\`)` },
+    { name: "SteamID", value: `\`${String(app.steamId ?? a.steamId ?? "—").slice(0, 32)}\`` },
+    ...QUESTIONS.filter((q) => q.key !== "steamId").map((q) => ({
+      name: q.title,
+      value: String(a[q.key] ?? "—").slice(0, 1024),
+    })),
+  ];
+
+  const embed = new EmbedBuilder()
+    .setTitle("📜 Whitelist — Nova aplicação")
+    .addFields(fields);
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`wl:approve:${app.id}`).setLabel("✅ Aprovar").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`wl:reject:${app.id}`).setLabel("❌ Reprovar").setStyle(ButtonStyle.Danger)
+  );
+
+  await (ch as TextChannel).send({ embeds: [embed], components: [row] });
 }
