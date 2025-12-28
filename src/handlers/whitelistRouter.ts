@@ -1,4 +1,4 @@
-import { Interaction } from "discord.js";
+import { Interaction, ButtonInteraction, ModalSubmitInteraction } from "discord.js";
 import {
   whitelistStartButton,
   handleWhitelistDecisionButton,
@@ -8,18 +8,25 @@ import {
 } from "../modules/whitelist/handler.js";
 
 export async function handleWhitelistInteraction(interaction: Interaction) {
-  // Buttons
   if (interaction.isButton()) {
-    if (interaction.customId === "wl:start") return whitelistStartButton(interaction);
-    if (interaction.customId.startsWith("wl:decision:")) return handleWhitelistDecisionButton(interaction);
+    const i = interaction as ButtonInteraction;
+    const id = i.customId;
+
+    if (id === "wl:start" || id === "whitelist:start" || id === "whitelistStart" || id.startsWith("wl:start") || id.startsWith("whitelist:start")) {
+      return whitelistStartButton(i);
+    }
+
+    if (id.startsWith("wl:decision:")) {
+      return handleWhitelistDecisionButton(i);
+    }
   }
 
-  // Modals (staff)
   if (interaction.isModalSubmit()) {
-    if (interaction.customId.startsWith("wl:reject_reason:")) return handleWhitelistRejectReasonModal(interaction);
-    if (interaction.customId.startsWith("wl:adjust_note:")) return handleWhitelistAdjustNoteModal(interaction);
+    const i = interaction as ModalSubmitInteraction;
+    const id = i.customId;
 
-    // Compat: antigo
-    if (interaction.customId.startsWith("wl:answer:")) return handleWhitelistAnswerModal(interaction);
+    if (id.startsWith("wl:reject_reason:")) return handleWhitelistRejectReasonModal(i);
+    if (id.startsWith("wl:adjust_note:")) return handleWhitelistAdjustNoteModal(i);
+    if (id.startsWith("wl:answer:")) return handleWhitelistAnswerModal(i);
   }
 }
