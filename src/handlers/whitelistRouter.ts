@@ -23,7 +23,7 @@ export async function handleWhitelistInteraction(interaction: Interaction) {
     }
 
     // Staff decisions
-    if (id.startsWith("wl:decision:")) {
+    if (id.startsWith("wl:approve:") || id.startsWith("wl:reject:") || id.startsWith("wl:decision:")) {
       return handleWhitelistDecisionButton(interaction);
     }
   }
