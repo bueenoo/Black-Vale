@@ -156,11 +156,6 @@ async function sendToStaff(guild: Guild, app: any) {
 
   if (!staffChannelId) return;
 
-  if (!staffChannelId) return;
-  if (!staffMessageId) {
-    // Se a decisão veio pelo botão, a mensagem está em interaction.message
-    // e já foi preenchida acima.
-  }
   const staffChannel = await guild.channels.fetch(staffChannelId).catch(() => null);
   if (!staffChannel || staffChannel.type !== ChannelType.GuildText) return;
 
