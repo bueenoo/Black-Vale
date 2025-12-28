@@ -39,6 +39,14 @@ async function findLatestApp(guildId: string, userId: string) {
   });
 }
 
+async function safeDM(user: { send: (o: any) => Promise<any> }, payload: { content: string }) {
+  try {
+    await user.send(payload);
+  } catch {
+    // DMs podem falhar (bloqueado/privado). Ignorar silenciosamente.
+  }
+}
+
 function steamIdOk(v: string) {
   return /^\d{17}$/.test(v.trim());
 }
@@ -245,21 +253,63 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
   }
 
   // DECISIONS
-  await interaction.deferReply({ ephemeral: true });
-
   const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
-
   const member = await guild.members.fetch(interaction.user.id);
   const isStaff =
     member.permissions.has(PermissionFlagsBits.ManageGuild) ||
     (cfg?.staffRoleId && member.roles.cache.has(cfg.staffRoleId));
+
+  const [, action, appId] = interaction.customId.split(":");
+
+  // REJECT / ADJUST precisam abrir modal como primeira resposta (sem deferReply)
+  if (action === "reject" || action === "adjust") {
+    if (!isStaff) {
+      await interaction.reply({ content: "⛔ Apenas staff pode decidir.", ephemeral: true });
+      return;
+    }
+
+    if (action === "reject") {
+      const modal = new ModalBuilder()
+        .setCustomId(`wl:reject_reason:${appId}`)
+        .setTitle("Motivo da reprovação");
+
+      const input = new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("Motivo (obrigatório)")
+        .setRequired(true)
+        .setStyle(TextInputStyle.Paragraph)
+        .setMaxLength(600);
+
+      modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // action === "adjust"
+    const modal = new ModalBuilder()
+      .setCustomId(`wl:adjust_note:${appId}`)
+      .setTitle("Pedido de ajuste");
+
+    const input = new TextInputBuilder()
+      .setCustomId("note")
+      .setLabel("O que o player deve corrigir?")
+      .setRequired(true)
+      .setStyle(TextInputStyle.Paragraph)
+      .setMaxLength(800);
+
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+    await interaction.showModal(modal);
+    return;
+  }
+
+  // APPROVE (pode deferReply)
+  await interaction.deferReply({ ephemeral: true });
 
   if (!isStaff) {
     await interaction.editReply("⛔ Apenas staff pode decidir.");
     return;
   }
 
-  const [, action, appId] = interaction.customId.split(":");
   const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
   if (!app) return interaction.editReply("❌ Aplicação não encontrada.");
 
@@ -274,45 +324,25 @@ export async function handleWhitelistDecisionButton(interaction: ButtonInteracti
       },
     });
 
-    // cargos (opcional)
-    if (cfg?.whitelistApprovedRoleId) {
-      const target = await guild.members.fetch(app.userId).catch(() => null);
-      if (target) {
+    const target = await guild.members.fetch(app.userId).catch(() => null);
+    if (target) {
+      // cargos (opcional)
+      if (cfg?.whitelistApprovedRoleId) {
         await target.roles.add(cfg.whitelistApprovedRoleId).catch(() => null);
-        if (cfg.whitelistPreResultRoleId) await target.roles.remove(cfg.whitelistPreResultRoleId).catch(() => null);
-        if (cfg.whitelistRoleId) await target.roles.remove(cfg.whitelistRoleId).catch(() => null);
       }
+      if (cfg?.whitelistPreResultRoleId) await target.roles.remove(cfg.whitelistPreResultRoleId).catch(() => null);
+      if (cfg?.whitelistRoleId) await target.roles.remove(cfg.whitelistRoleId).catch(() => null);
+
+      // DM aprovado
+      await safeDM(target.user, {
+        content:
+          `✅ **Whitelist aprovada!**\n` +
+          `Você foi aceito no **${cfg?.brandName ?? guild.name}**.\n` +
+          `Bem-vindo(a) ao Vale dos Ossos.`,
+      });
     }
 
     return interaction.editReply("✅ Whitelist aprovada.");
-  }
-
-  if (action === "reject") {
-    const modal = new ModalBuilder()
-      .setCustomId(`wl:reject_reason:${app.id}`)
-      .setTitle("Motivo da reprovação");
-
-    const input = new TextInputBuilder()
-      .setCustomId("reason")
-      .setLabel("Motivo (obrigatório)")
-      .setRequired(true)
-      .setStyle(TextInputStyle.Paragraph)
-      .setMaxLength(600);
-
-    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
-
-    // Modal precisa ser a PRIMEIRA resposta => aqui a gente já deferReply acima
-    // Então para rejeição, NÃO podemos deferReply antes.
-    // Como já deferimos, em alguns fluxos isso pode dar erro.
-    // Por isso, movemos a lógica: se action === "reject", precisamos abrir modal sem defer.
-    // Porém, como já estamos aqui, vamos fazer um fallback seguro:
-    try {
-      // tenta abrir o modal mesmo assim (se não tiver sido respondido em algum caso)
-      await interaction.showModal(modal);
-    } catch {
-      await interaction.editReply("⚠️ Não consegui abrir o modal de motivo. Tente novamente.");
-    }
-    return;
   }
 
   return interaction.editReply("⚠️ Ação inválida.");
@@ -350,6 +380,15 @@ export async function handleWhitelistRejectReasonModal(interaction: ModalSubmitI
   if (target) {
     if (cfg?.whitelistRejectedRoleId) await target.roles.add(cfg.whitelistRejectedRoleId).catch(() => null);
     if (cfg?.whitelistPreResultRoleId) await target.roles.remove(cfg.whitelistPreResultRoleId).catch(() => null);
+
+    // DM reprovado
+    await safeDM(target.user, {
+      content:
+        `❌ **Whitelist reprovada**\n` +
+        `Servidor: **${cfg?.brandName ?? guild.name}**\n` +
+        `Motivo: ${reason || "(não informado)"}\n\n` +
+        `Você pode **refazer a whitelist** e tentar novamente.`,
+    });
   }
 
   // log reprovação
@@ -363,6 +402,47 @@ export async function handleWhitelistRejectReasonModal(interaction: ModalSubmitI
   }
 
   return interaction.editReply("❌ Reprovado e registrado.");
+}
+
+/* =========================
+   MODAL: ADJUST NOTE
+========================= */
+
+export async function handleWhitelistAdjustNoteModal(interaction: ModalSubmitInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+  const guild = interaction.guild;
+  if (!guild) return;
+
+  const appId = interaction.customId.split(":")[2];
+  const note = (interaction.fields.getTextInputValue("note") ?? "").trim();
+
+  const cfg = await prisma.guildConfig.findUnique({ where: { guildId: guild.id } });
+  const app = await prisma.whitelistApplication.findUnique({ where: { id: appId } });
+  if (!app) return interaction.editReply("❌ Aplicação não encontrada.");
+
+  await prisma.whitelistApplication.update({
+    where: { id: app.id },
+    data: {
+      status: WhitelistStatus.ADJUST,
+      decidedAt: new Date(),
+      decidedById: interaction.user.id,
+      decidedByTag: interaction.user.tag,
+      decisionNote: note,
+    },
+  });
+
+  const target = await guild.members.fetch(app.userId).catch(() => null);
+  if (target) {
+    await safeDM(target.user, {
+      content:
+        `✍️ **Ajuste necessário na sua whitelist**\n` +
+        `Servidor: **${cfg?.brandName ?? guild.name}**\n\n` +
+        `O que corrigir:\n${note || "(não informado)"}\n\n` +
+        `Você pode iniciar novamente a whitelist e reenviar.`,
+    });
+  }
+
+  return interaction.editReply("✍️ Pedido de ajuste enviado ao player.");
 }
 
 /* =========================
@@ -400,7 +480,8 @@ async function sendToStaff(guildId: string, appId: string) {
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`wl:approve:${app.id}`).setLabel("✅ Aprovar").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`wl:reject:${app.id}`).setLabel("❌ Reprovar").setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId(`wl:reject:${app.id}`).setLabel("❌ Reprovar").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`wl:adjust:${app.id}`).setLabel("✍️ Ajuste").setStyle(ButtonStyle.Secondary)
   );
 
   await (ch as TextChannel).send({ embeds: [embed], components: [row] });
